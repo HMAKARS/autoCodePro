@@ -11,16 +11,29 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
+import environ
+
+#BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+# 환경변수 로드
+env = environ.Env()
+environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
+
+# 업비트 API 키 설정
+UPBIT_ACCESS_KEY = env("UPBIT_API_KEY")
+UPBIT_SECRET_KEY = env("UPBIT_SECRET_KEY")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-)i-qm=#kep5e+q4zx-qb&#3@#c_-u0wlri)u!m662_w5*_onr_'
+SECRET_KEY = env("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -30,16 +43,24 @@ ALLOWED_HOSTS = []
 
 # Application definition
 
+# settings.py
 INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.contenttypes",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "django.contrib.staticfiles",
-    "rest_framework",
-    "trading",
+    'django.contrib.admin',
+    'django.contrib.auth',
+    'django.contrib.contenttypes',
+    'django.contrib.sessions',
+    'django.contrib.messages',
+    'django.contrib.staticfiles',
+
+    # Django 기본 내장 라이브러리
+    'django.contrib.humanize',  # ← humanize 필터 추가
+
+    # 앱 목록
+    'rest_framework',
+    'trading',  # 여기에 trading 앱 추가
 ]
+
+
 
 
 MIDDLEWARE = [
