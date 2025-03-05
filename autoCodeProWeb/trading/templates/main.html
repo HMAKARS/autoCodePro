@@ -32,7 +32,7 @@
             <td>{{ account.currency }}</td>
             <td>{{ account.balance|floatformat:4|intcomma }}</td>
             <td>{{ account.avg_buy_price|floatformat:0|intcomma }}</td>
-            <td style="color: {% if account.balance|floatformat:0 > account.avg_buy_price %}red{% else %}blue{% endif %};">
+            <td style="color:{% if account.balance|floatformat:0 > account.avg_buy_price %}red{% else %}blue{% endif %};">
                 {{ account.balance|floatformat:0|intcomma }}
             </td>
         </tr>
@@ -42,7 +42,7 @@
 
 <!-- 거래량 상위 5개 코인 -->
 <div class="section">
-    <h3>전일 대비 상승한 상위 5개 코인</h3>
+    <h3>전일 대비 상승한 거래유망코인들</h3>
     <table id="coin-table">
         <thead>
         <tr><th>코인명</th><th>현재가 (KRW)</th><th>전일 대비</th><th>거래대금 (KRW)</th></tr>
@@ -52,7 +52,7 @@
         <tr>
             <td>{{ coin.market }}</td>
             <td>{{ coin.trade_price | intcomma }}원</td>
-            <td style="color: {% if coin.signed_change_rate > 0 %}red{% else %}blue{% endif %};">
+            <td style="color:{% if coin.signed_change_rate > 0 %}red{% else %}blue{% endif %};">
                 {{ coin.signed_change_rate | floatformat:2 }}%
             </td>
             <td>{{ coin.acc_trade_price_24h | intcomma }}원</td>
@@ -78,6 +78,32 @@
 </div>
 
 <script>
+    function updateAccountData() {
+        fetch("/api/fetch_account_data/")
+            .then(response => response.json())
+            .then(data => {
+                console.log("🔍 계좌 정보 업데이트:", data); // ✅ 디버깅용 로그 추가
+                if (!data.account_info) {
+                    console.error("⚠️ 계좌 정보 없음!");
+                    return;
+                }
+
+                let accountTable = "<tr><th>화폐</th><th>보유 수량</th><th>평균 매수가</th><th>현재 평가 금액</th></tr>";
+                data.account_info.forEach(account => {
+                    let evalPrice = parseFloat(account.balance) * parseFloat(account.avg_buy_price || 0);
+                    let color = evalPrice > parseFloat(account.avg_buy_price || 0) ? "red" : "blue";
+                    accountTable += `<tr>
+                            <td>${account.currency}</td>
+                            <td>${parseFloat(account.balance).toLocaleString()}</td>
+                            <td>${parseFloat(account.avg_buy_price || 0).toLocaleString()}</td>
+                            <td style="color: ${color};">${evalPrice.toLocaleString()}</td>
+                        </tr>`;
+                });
+
+                document.getElementById("account-table").innerHTML = accountTable;
+            })
+            .catch(error => console.error("⚠️ 계좌 정보 업데이트 오류:", error));
+    }
     function updateCoinData() {
         fetch("/api/fetch_coin_data/")
             .then(response => response.json())
@@ -98,8 +124,8 @@
 
     function startAutoTrading() {
         let budget = document.getElementById("buy_amount").value;
-        if (parseInt(budget) < 1000) {
-            alert("최소 매수 금액은 1,000원 이상이어야 합니다.");
+        if (parseInt(budget) < 5000) {
+            alert("최소 매수 금액은 5,000원 이상이어야 합니다.");
             return;
         }
         fetch(`/auto_trade/start/?budget=${budget}`)
@@ -136,6 +162,7 @@
     setInterval(updateTradeLogs, 1000);
     setInterval(updateCoinData, 1000);
     setInterval(checkAutoTradingStatus, 5000);
+    setInterval(updateAccountData, 1000);
 </script>
 </body>
 </html>

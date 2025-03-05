@@ -2,10 +2,14 @@
 
 import requests
 import jwt
+import hashlib
+import os
 import uuid
-import numpy as np
-import time
+from urllib.parse import urlencode, unquote
 from django.conf import settings
+from .models import FailedMarket
+
+failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
 
 def get_account_info():
     """ ✅ 업비트 전체 계좌 조회 API 호출 """
@@ -49,83 +53,142 @@ def get_krw_market_coin_info():
         } for ticker in ticker_response.json()
     ], key=lambda x: x["acc_trade_price_24h"], reverse=True)
 
-def upbit_order(market, side, volume=None, price=None, ord_type="limit"):
-    """ ✅ 업비트 주문 실행 함수 """
+def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in_force=None):
+    """ ✅ 업비트 주문 요청 (실패 시 재시도 방지 및 실패 시장 추적) """
+    if market in failed_markets:
+        print(f"⚠️ {market}은(는) 이전 주문 실패로 인해 제외됨")
+        return {"error": "Market excluded due to previous failures"}
+
+    access_key = settings.UPBIT_ACCESS_KEY
+    secret_key = settings.UPBIT_SECRET_KEY
+    server_url = "https://api.upbit.com"
+
+    params = {
+        'market': market,
+        'side': side,
+        'ord_type': ord_type,
+    }
+    if ord_type == "price":
+        params['price'] = str(price)
+    elif ord_type == "market":
+        params['volume'] = str(volume)
+    elif ord_type == "limit":
+        params['price'] = str(price)
+        params['volume'] = str(volume)
+
+    if time_in_force:
+        params['time_in_force'] = time_in_force
+
+    query_string = unquote(urlencode(params, doseq=True)).encode("utf-8")
+    m = hashlib.sha512()
+    m.update(query_string)
+    query_hash = m.hexdigest()
+
+    payload = {
+        'access_key': access_key,
+        'nonce': str(uuid.uuid4()),
+        'query_hash': query_hash,
+        'query_hash_alg': 'SHA512',
+    }
+
+    jwt_token = jwt.encode(payload, secret_key, algorithm='HS256')
+    authorization = f'Bearer {jwt_token}'
+    headers = {'Authorization': authorization}
+
+    response = requests.post(f"{server_url}/v1/orders", json=params, headers=headers)
+    if response.status_code != 201:
+        print(f"⚠️ 주문 요청 실패: {response.json()}")
+        FailedMarket.objects.get_or_create(market=market)  # DB에 실패 시장 추가
+        failed_markets.add(market)  # ✅ 실패한 시장을 추적하여 이후 매수에서 제외
+        return {"error": response.json()}
+
+    return response.json()
+
+def get_upbit_token() :
+    access_key = settings.UPBIT_ACCESS_KEY
+    secret_key = settings.UPBIT_SECRET_KEY
+    payload = {
+        'access_key': access_key,
+        'nonce': str(uuid.uuid4()),
+    }
+    jwt_token = jwt.encode(payload, secret_key, algorithm="HS256")
+    return jwt_token
+
+
+def check_order_filled(order_uuid):
+    """ ✅ 주문이 체결되었는지 확인 """
+    access_key = settings.UPBIT_ACCESS_KEY
+    secret_key = settings.UPBIT_SECRET_KEY
+    server_url = "https://api.upbit.com"
+
+    params = {"uuid": order_uuid}
+    query_string = unquote(urlencode(params, doseq=True)).encode("utf-8")
+
+    m = hashlib.sha512()
+    m.update(query_string)
+    query_hash = m.hexdigest()
+
+    payload = {
+        'access_key': access_key,
+        'nonce': str(uuid.uuid4()),
+        'query_hash': query_hash,
+        'query_hash_alg': 'SHA512',
+    }
+
+    jwt_token = jwt.encode(payload, secret_key, algorithm='HS256')
+    headers = {"Authorization": f"Bearer {jwt_token}"}
+
+    url = f"{server_url}/v1/order"
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        print(f"⚠️ 주문 체결 확인 실패: {response.json()}")
+        return False
+
+    order_data = response.json()
+    return order_data.get("state") == "done"  # ✅ 체결 완료 상태인지 확인
+
+
+
+def get_orderbook(markets):
+    """ ✅ 여러 코인의 호가 데이터를 한 번에 가져옴 (429 방지) """
+    url = "https://api.upbit.com/v1/orderbook"
+    params = {"markets": ",".join(markets)}
+
+    try:
+        response = requests.get(url, params=params, timeout=2)
+        if response.status_code != 200:
+            print(f"⚠️ 호가 데이터 요청 실패 (HTTP {response.status_code})")
+            return {}
+
+        orderbook_data = response.json()
+        return {item["market"]: item for item in orderbook_data}
+
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️ 호가 데이터 요청 실패: {str(e)}")
+        return {}
+
+
+def get_open_orders():
+    """ ✅ 업비트 API를 사용하여 현재 미체결 주문 목록 조회 """
     access_key = settings.UPBIT_ACCESS_KEY
     secret_key = settings.UPBIT_SECRET_KEY
 
-    payload = {"market": market, "side": side, "ord_type": ord_type, "nonce": str(uuid.uuid4())}
-    if ord_type == "price":
-        payload["price"] = str(price)
-    elif ord_type == "market":
-        payload["volume"] = str(volume)
+    payload = {
+        'access_key': access_key,
+        'nonce': str(uuid.uuid4()),
+    }
 
-    jwt_token = jwt.encode(payload, secret_key, algorithm="HS256")
+    jwt_token = jwt.encode(payload, secret_key, algorithm='HS256')
     headers = {"Authorization": f"Bearer {jwt_token}"}
-    response = requests.post("https://api.upbit.com/v1/orders", headers=headers, json=payload)
 
-    return response.json() if response.status_code == 201 else {"error": response.json()}
+    url = "https://api.upbit.com/v1/orders?state=open"
+    response = requests.get(url, headers=headers)
 
-def get_rsi(market, period=14, max_retries=3):
-    """ ✅ RSI(상대강도지수) 계산 (API 요청 제한 고려) """
-    url = f"https://api.upbit.com/v1/candles/minutes/1?market={market}&count={period+1}"
+    if response.status_code == 200:
+        return response.json()  # ✅ 미체결 주문 리스트 반환
+    else:
+        print(f"⚠️ 미체결 주문 조회 실패: {response.status_code}, {response.json()}")
+        return []
 
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url, timeout=5)
-            if response.status_code != 200:
-                raise ValueError(f"API 응답 실패 (HTTP {response.status_code})")
 
-            response_json = response.json()
-            if not isinstance(response_json, list) or len(response_json) < period + 1:
-                raise ValueError("API 응답 데이터 부족")
-
-            prices = [candle.get("trade_price", 0) for candle in response_json if isinstance(candle, dict)]
-            if len(prices) < period + 1:
-                raise ValueError("RSI 계산에 필요한 데이터 부족")
-
-            gains = [max(0, prices[i] - prices[i-1]) for i in range(1, len(prices))]
-            losses = [max(0, prices[i-1] - prices[i]) for i in range(1, len(prices))]
-
-            avg_gain = np.mean(gains)
-            avg_loss = np.mean(losses)
-
-            if avg_loss == 0:
-                return 100  # ✅ 손실이 없으면 RSI는 100
-
-            rs = avg_gain / avg_loss
-            return 100 - (100 / (1 + rs))
-
-        except (requests.exceptions.RequestException, ValueError) as e:
-            print(f"⚠️ {market} RSI 요청 실패: {str(e)} (재시도 {attempt+1}/{max_retries})")
-            time.sleep(1)
-
-    return None  # ✅ 최종 실패 시 `None` 반환
-
-def get_volatility(market):
-    """ ✅ 최근 1시간 변동성 체크 (API 요청 최적화) """
-    url = f"https://api.upbit.com/v1/candles/minutes/60?market={market}&count=1"
-
-    try:
-        response = requests.get(url, timeout=5)
-        if response.status_code != 200:
-            print(f"⚠️ {market} 변동성 요청 실패 (HTTP {response.status_code})")
-            return None  # ✅ 요청 실패 시 None 반환
-
-        response_json = response.json()
-        if not isinstance(response_json, list) or len(response_json) == 0:
-            print(f"⚠️ {market} 변동성 데이터 없음")
-            return None  # ✅ 데이터 없음 처리
-
-        high = response_json[0].get("high_price")
-        low = response_json[0].get("low_price")
-
-        if high is None or low is None:
-            return None  # ✅ 데이터가 없을 경우 None 반환
-
-        avg = (high + low) / 2
-        return ((high - low) / avg) * 100  # 변동률 %
-
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ {market} 변동성 요청 실패: {str(e)}")
-        return None  # ✅ 네트워크 오류 발생 시 None 반환
