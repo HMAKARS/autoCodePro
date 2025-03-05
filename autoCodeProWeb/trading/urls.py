@@ -1,6 +1,6 @@
 # trading/urls.py
 from django.urls import path
-from .views import main_view, start_auto_trading, stop_auto_trading, fetch_account_data, fetch_coin_data , check_auto_trading , fetch_trade_logs
+from .views import main_view, start_auto_trading, stop_auto_trading, fetch_account_data, fetch_coin_data, check_auto_trading, fetch_trade_logs
 
 urlpatterns = [
     path('', main_view, name='main-page'),
@@ -10,4 +10,4 @@ urlpatterns = [
     path('api/fetch_coin_data/', fetch_coin_data, name='fetch-coin-data'),
     path('api/trade_logs/', fetch_trade_logs, name='fetch-trade-logs'),
     path('api/check_auto_trading/', check_auto_trading, name='check_auto_trading'),
-]
+    ]

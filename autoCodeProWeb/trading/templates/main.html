@@ -5,27 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>업비트 자동매매 시스템</title>
     <style>
-        html, body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            width: 98%;
-            height: 100%;
-        }
-
-        #trade-log {
-            height: 150px;
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            padding: 10px;
-            background-color: #f8f8f8;
-            width: 100%;
-        }
-
+        html, body { margin: 0; padding: 0; width: 98%; height: 100%; }
+        #trade-log, #sell-log { height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background-color: #f8f8f8; width: 100%; }
         body { font-family: Arial, sans-serif; margin: 20px; padding: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        table, th, td { border: 1px solid #ddd; }
-        th, td { padding: 10px; text-align: center; }
+        table, th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
         th { background-color: #f4f4f4; }
         .section { margin-bottom: 40px; }
         .button { padding: 10px 20px; margin: 5px; border: none; cursor: pointer; }
@@ -38,15 +22,11 @@
 {% load humanize %}
 <h2>업비트 자동매매 시스템</h2>
 
+<!-- 내 자산 -->
 <div class="section">
     <h3>내 자산 (계좌 정보)</h3>
     <table id="account-table">
-        <tr>
-            <th>화폐</th>
-            <th>보유 수량</th>
-            <th>평균 매수 단가</th>
-            <th>현재 평가 금액</th>
-        </tr>
+        <tr><th>화폐</th><th>보유 수량</th><th>평균 매수가</th><th>현재 평가 금액</th></tr>
         {% for account in account_info %}
         <tr>
             <td>{{ account.currency }}</td>
@@ -60,17 +40,12 @@
     </table>
 </div>
 
-<!-- 거래량 상위 5개 코인 표시 -->
+<!-- 거래량 상위 5개 코인 -->
 <div class="section">
     <h3>전일 대비 상승한 상위 5개 코인</h3>
     <table id="coin-table">
         <thead>
-        <tr>
-            <th>코인명</th>
-            <th>현재가 (KRW)</th>
-            <th>전일 대비</th>
-            <th>거래대금 (KRW)</th>
-        </tr>
+        <tr><th>코인명</th><th>현재가 (KRW)</th><th>전일 대비</th><th>거래대금 (KRW)</th></tr>
         </thead>
         <tbody>
         {% for coin in top_coins %}
@@ -87,7 +62,7 @@
     </table>
 </div>
 
-<!-- 자동매매 컨트롤 및 로그 -->
+<!-- 자동매매 컨트롤 -->
 <div class="section" style="display: flex; align-items: flex-start; gap: 20px;">
     <div>
         <h3 id="auto-trade-status"></h3>
@@ -96,7 +71,6 @@
         <button class="button start" onclick="startAutoTrading()">자동매매 시작</button>
         <button class="button stop" onclick="stopAutoTrading()">자동매매 정지</button>
     </div>
-
     <div style="width: 100%">
         <h3>자동매매 로그</h3>
         <div id="trade-log"></div>
@@ -104,25 +78,6 @@
 </div>
 
 <script>
-    function updateAccountData() {
-        fetch("/api/fetch_account_data/")
-            .then(response => response.json())
-            .then(data => {
-                let accountTable = "<tr><th>화폐</th><th>보유 수량</th><th>평균 매수가</th><th>현재 평가 금액</th></tr>";
-                data.account_info.forEach(account => {
-                    let evalPrice = parseFloat(account.balance) * parseFloat(account.avg_buy_price);
-                    let color = evalPrice > parseFloat(account.avg_buy_price) ? "red" : "blue";
-                    accountTable += `<tr>
-                            <td>${account.currency}</td>
-                            <td>${parseFloat(account.balance).toLocaleString()}</td>
-                            <td>${parseFloat(account.avg_buy_price).toLocaleString()}</td>
-                            <td style="color: ${color};">${evalPrice.toLocaleString()}</td>
-                        </tr>`;
-                });
-                document.getElementById("account-table").innerHTML = accountTable;
-            });
-    }
-
     function updateCoinData() {
         fetch("/api/fetch_coin_data/")
             .then(response => response.json())
@@ -131,11 +86,11 @@
                 data.top_coins.forEach(coin => {
                     let color = coin.signed_change_rate >= 0 ? "red" : "blue";
                     coinTable += `<tr>
-                            <td>${coin.market}</td>
-                            <td>${parseFloat(coin.trade_price).toLocaleString()}원</td>
-                            <td style="color: ${color};">${(coin.signed_change_rate * 100).toFixed(2)}%</td>
-                            <td>${parseFloat(coin.acc_trade_price_24h).toLocaleString()}원</td>
-                        </tr>`;
+                        <td>${coin.market}</td>
+                        <td>${parseFloat(coin.trade_price).toLocaleString()}원</td>
+                        <td style="color: ${color};">${(coin.signed_change_rate * 100).toFixed(2)}%</td>
+                        <td>${parseFloat(coin.acc_trade_price_24h).toLocaleString()}원</td>
+                    </tr>`;
                 });
                 document.getElementById("coin-table").innerHTML = coinTable;
             });
@@ -143,30 +98,19 @@
 
     function startAutoTrading() {
         let budget = document.getElementById("buy_amount").value;
-
         if (parseInt(budget) < 1000) {
             alert("최소 매수 금액은 1,000원 이상이어야 합니다.");
             return;
         }
-
         fetch(`/auto_trade/start/?budget=${budget}`)
             .then(response => response.json())
-            .then(data => {
-                if (data.status === "started") {
-                    alert(`자동매매가 시작되었습니다! (매수 금액: ${budget}원)`);
-                } else if (data.status === "error") {
-                    alert(data.message);
-                } else {
-                    alert("자동매매가 이미 실행 중입니다.");
-                }
-            })
-            .catch(error => alert("서버 오류 발생: " + error));
+            .then(data => alert(data.status === "started" ? "자동매매가 시작되었습니다!" : "자동매매 실행 중입니다."));
     }
 
     function stopAutoTrading() {
         fetch(`/auto_trade/stop/`)
             .then(response => response.json())
-            .then(data => alert(data.status === "stopped" ? "자동매매가 중지되었습니다!" : "자동매매 중지에 실패했습니다."));
+            .then(data => alert(data.status === "stopped" ? "자동매매가 중지되었습니다!" : "자동매매 중지 실패"));
     }
 
     function updateTradeLogs() {
@@ -189,14 +133,9 @@
             });
     }
 
-    window.onbeforeunload = function () {
-        fetch("/auto_trade/stop/", { method: "GET" });
-    };
-
-    setInterval(updateTradeLogs, 100);
-    setInterval(updateCoinData, 300); // ✅ 2초마다 상위 5개 코인 정보 업데이트
-    setInterval(updateAccountData, 200); // ✅ 2초마다 업데이트
-    setInterval(checkAutoTradingStatus, 500);
+    setInterval(updateTradeLogs, 1000);
+    setInterval(updateCoinData, 1000);
+    setInterval(checkAutoTradingStatus, 5000);
 </script>
 </body>
 </html>

@@ -12,37 +12,30 @@ def main_view(request):
     _, top_coins = get_best_trade_coin()  # ✅ UI에 표시할 상위 5개 코인 가져오기
 
     return render(request, "main.html", {
-        "account_info": get_account_info(),  # ✅ 내 계좌 정보 추가
-        "top_coins": top_coins  # ✅ UI에서 사용 가능하도록 추가
+        "account_info": get_account_info(),
+        "top_coins": top_coins
     })
 
 def fetch_account_data(request):
-    """ ✅ AJAX 요청을 받아 전체 계좌 정보를 반환 (내 자산 조회 API) """
+    """ ✅ AJAX 요청을 받아 전체 계좌 정보를 반환 """
     return JsonResponse({"account_info": get_account_info()})
 
 def fetch_coin_data(request):
-    """ ✅ AJAX 요청을 받아 상위 5개 코인 정보를 반환 (실시간 업데이트용 API) """
-    _, top_coins = get_best_trade_coin()  # ✅ 최신 데이터 가져오기
+    """ ✅ AJAX 요청을 받아 상위 5개 코인 정보를 반환 """
+    _, top_coins = get_best_trade_coin()
     return JsonResponse({"top_coins": top_coins})
 
 def fetch_trade_logs(request):
-    """ ✅ 자동매매 로그 반환 API """
+    """ ✅ 자동매매 로그 반환 """
     return JsonResponse({"logs": trade_logs})
 
 def start_auto_trading(request):
-    """ ✅ 자동매매 시작 API (변동값 반영) """
+    """ ✅ 자동매매 시작 API """
     global trader
-    budget_str = request.GET.get("budget", "10000")  # ✅ 문자열 값으로 가져옴
-
-    try:
-        budget = int(budget_str)  # ✅ 정수로 변환
-        if budget < 5000:  # ✅ 최소 매수 금액 제한 (1,000원)
-            return JsonResponse({"status": "error", "message": "최소 매수 금액은 1,000원 이상이어야 합니다."})
-    except ValueError:
-        return JsonResponse({"status": "error", "message": "잘못된 매수 금액 입력"})
+    budget = int(request.GET.get("budget", 10000))
 
     if trader is None or not trader.is_active:
-        trader = AutoTrader(budget)  # ✅ 변동값 적용
+        trader = AutoTrader(budget)
         threading.Thread(target=trader.start_trading).start()
         return JsonResponse({"status": "started", "budget": budget})
 
@@ -58,5 +51,5 @@ def stop_auto_trading(request):
     return JsonResponse({"status": "not running"})
 
 def check_auto_trading(request):
-    """ ✅ 자동매매 실행 여부 확인 API """
+    """ ✅ 자동매매 실행 여부 확인 """
     return JsonResponse({"is_active": trader.is_active if trader else False})
