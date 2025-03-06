@@ -7,6 +7,7 @@ class TradeRecord(models.Model):
     uuid = models.CharField(max_length=100, unique=True, null=True, blank=True)  # 주문 UUID
     created_at = models.DateTimeField(auto_now_add=True)  # 주문 시간
     is_active = models.BooleanField(default=True)  # 거래 활성 상태
+    buy_krw_price = models.FloatField(default=0) #원화매수가격
 
     def __str__(self):
         return f"{self.market} (매수가: {self.buy_price})"

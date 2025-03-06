@@ -76,6 +76,7 @@ class AutoTrader:
         self.is_active = False
         self.active_trades = {}  # ✅ 현재 활성화된 거래 목록 (market -> 거래 정보)
         self.failed_markets = set()
+        self.failedTrade = 0
 
         # ✅ DB에서 기존 거래 불러오기 (프로그램 재시작 시 유지)
         active_trades = TradeRecord.objects.filter(is_active=True)
@@ -83,7 +84,8 @@ class AutoTrader:
             self.active_trades[trade.market] = {
                 "buy_price": trade.buy_price,
                 "highest_price": trade.highest_price,
-                "uuid": trade.uuid
+                "uuid": trade.uuid,
+                "created_at": trade.created_at  # ✅ created_at 추가!
             }
         print(f"🔄 기존 거래 불러오기 완료: {list(self.active_trades.keys())}")
 
@@ -94,7 +96,7 @@ class AutoTrader:
         if len(trade_logs) > 50:
             trade_logs.pop(0)
 
-    def save_trade(self, market, buy_price, uuid):
+    def save_trade(self, market, buy_price, uuid , budget):
         """ ✅ 현재 거래 상태를 DB에 저장 (매수 시 `created_at` 갱신) """
         with transaction.atomic():
             trade, created = TradeRecord.objects.update_or_create(
@@ -105,6 +107,7 @@ class AutoTrader:
                     "uuid": uuid,
                     "is_active": True,
                     "created_at": timezone.now(),  # ✅ 매수 시점 갱신
+                    "buy_krw_price" : self.budget
                 }
             )
             self.active_trades[market] = {
@@ -130,16 +133,22 @@ class AutoTrader:
 
     def start_trading(self):
         """ ✅ 자동매매 시작 """
-        if self.is_active:
-            self.log("⚠️ 이미 자동매매 실행 중")
-            return
+        try :
+            if self.is_active:
+                self.log("⚠️ 이미 자동매매 실행 중")
+                return
 
-        self.is_active = True
-        self.log("🚀 자동매매 시작됨!")
+            self.is_active = True
+            self.log("🚀 자동매매 시작됨!")
 
-        while self.is_active:
-            self.execute_trade()
-            time.sleep(1)
+            while self.is_active:
+                self.execute_trade()
+                time.sleep(1)
+        except Exception as e :
+            self.failedTrade += 1
+            while self.is_active and self.failedTrade < 3:
+                self.execute_trade()
+                time.sleep(1)
 
     def stop_trading(self):
         """ ✅ 자동매매 중지 """
@@ -160,7 +169,7 @@ class AutoTrader:
         active_trades = TradeRecord.objects.filter(is_active=True)
         active_markets = set(active_trades.values_list("market", flat=True))
         self.active_trades = {
-            trade.market: {"buy_price": trade.buy_price, "uuid": trade.uuid, "highest_price": trade.highest_price} for trade
+            trade.market: {"buy_price": trade.buy_price, "uuid": trade.uuid, "highest_price": trade.highest_price , "created_at" : trade.created_at} for trade
             in active_trades}
 
         # ✅ 사용자가 직접 매도했는지 확인
@@ -214,9 +223,10 @@ class AutoTrader:
             real_sell_price = current_price * (1 - fee_rate)
             profit_rate = ((real_sell_price - real_buy_price) / real_buy_price) * 100
 
-            # ✅ 기존 거래 데이터에 entry_time이 없을 경우, created_at 사용
-            trade_entry_time = TradeRecord.objects.get(market=market).created_at.timestamp()  # ✅ created_at → timestamp 변환
-            holding_time = (timezone.now() - trade_data["created_at"]).total_seconds() if "created_at" in trade_data else 0
+            if "created_at" in trade_data and trade_data["created_at"]:
+                holding_time = (timezone.now() - trade_data["created_at"]).total_seconds()
+            else:
+                holding_time = 0  # ✅ created_at이 없을 경우 기본값 0
 
             self.log(f"📊 거래중인 코인 = {market} 현재 가격: {current_price:.8f}원 "
                      f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "

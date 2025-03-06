@@ -6,7 +6,7 @@ import hashlib
 import uuid
 from urllib.parse import urlencode, unquote
 from django.conf import settings
-from .models import FailedMarket,MarketVolumeRecord
+from .models import TradeRecord,FailedMarket,MarketVolumeRecord
 
 failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
 market_volume_cur = None # 현재 장상황
@@ -27,7 +27,10 @@ def get_account_info():
 
     url = "https://api.upbit.com/v1/accounts"
     response = requests.get(url, headers=headers)
-
+    if response.status_code == 200 :
+        tranRecord = TradeRecord.objects.filter(is_active=True,krw_buy_price__gt=0)
+        #if len(tranRecord) > 0 :
+        # 마저 작업할 부분
     return response.json() if response.status_code == 200 else {"error": response.json()}
 
 def get_krw_market_coin_info():
