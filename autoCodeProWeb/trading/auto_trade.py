@@ -1,5 +1,6 @@
 # trading/auto_trade.py
 import time
+from django.utils import timezone
 import threading
 from .models import TradeRecord
 from django.db import transaction
@@ -94,21 +95,23 @@ class AutoTrader:
             trade_logs.pop(0)
 
     def save_trade(self, market, buy_price, uuid):
-        """ ✅ 현재 거래 상태를 DB에 저장 """
+        """ ✅ 현재 거래 상태를 DB에 저장 (매수 시 `created_at` 갱신) """
         with transaction.atomic():
-            trade, _ = TradeRecord.objects.update_or_create(
+            trade, created = TradeRecord.objects.update_or_create(
                 market=market,
                 defaults={
                     "buy_price": buy_price,
                     "highest_price": buy_price,  # 초기 최고가 = 매수가
                     "uuid": uuid,
                     "is_active": True,
+                    "created_at": timezone.now(),  # ✅ 매수 시점 갱신
                 }
             )
             self.active_trades[market] = {
                 "buy_price": buy_price,
                 "highest_price": buy_price,
-                "uuid": uuid
+                "uuid": uuid,
+                "created_at": trade.created_at,  # ✅ 내부 저장소에도 저장
             }
 
     def clear_trade(self, market):
@@ -213,24 +216,40 @@ class AutoTrader:
 
             # ✅ 기존 거래 데이터에 entry_time이 없을 경우, created_at 사용
             trade_entry_time = TradeRecord.objects.get(market=market).created_at.timestamp()  # ✅ created_at → timestamp 변환
-            holding_time = time.time() - trade_entry_time  # ✅ 보유 시간 계산 (초 단위)
+            holding_time = (timezone.now() - trade_data["created_at"]).total_seconds() if "created_at" in trade_data else 0
 
             self.log(f"📊 거래중인 코인 = {market} 현재 가격: {current_price:.8f}원 "
                      f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
                      f"수익률: {profit_rate:.2f}%)")
 
-            # ✅ 보합장 / 하락장에서 5분 경과 후 1% 수익 시 즉시 매도
-            if market_trend in ["neutral", "bearish"] and holding_time > 600:  # ✅ 10분(600초) 초과
-                if current_price >= buy_price * 1.01:  # ✅ 1% 수익
-                    self.log(f"✅ 보합/하락장 감지 → 5분 보유 후 1% 수익 도달! 즉시 매도: {market}, 가격: {current_price:.8f}원")
+            # ✅ 10분 보유 후 1% 수익 도달 시 매도 (보합장/하락장)
+            if market_trend in ["neutral", "bearish"] and holding_time > 600:
+                if current_price >= buy_price * 1.01:
+                    self.log(f"✅ 보합/하락장 감지 → 10분 보유 후 1% 수익 도달! 즉시 매도: {market}, 가격: {current_price:.8f}원")
                     getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
-                    f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
-                    f"수익률: {profit_rate:.2f}%)")
+                                            f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                                            f"수익률: {profit_rate:.2f}%)")
                     sell_order = upbit_order(market, "ask", ord_type="market",
                                              volume=str(user_holdings.get(currency, {}).get("balance", 0)))
                     if "error" not in sell_order:
                         trade_data["uuid"] = sell_order["uuid"]
-                    continue  # ✅ 즉시 매도되었으므로 추가 트레일링 스탑 실행 X
+                    continue
+                else:
+                    self.log(f"🚨 {market} : 10분 경과 BUT 1% 수익률 미달, 현재 수익률 {profit_rate:.2f}%")
+            # ✅ 5분 보유 후 1% 수익 도달 시 매도 (상승장)
+            elif market_trend == "bullish" and holding_time > 360:
+                if current_price >= buy_price * 1.01:
+                    self.log(f"✅ 상승장 감지 → 5분 보유 후 1% 수익 도달! 즉시 매도: {market}, 가격: {current_price:.8f}원")
+                    getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
+                                                f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                                                f"수익률: {profit_rate:.2f}%)")
+                    sell_order = upbit_order(market, "ask", ord_type="market",
+                                                 volume=str(user_holdings.get(currency, {}).get("balance", 0)))
+                    if "error" not in sell_order:
+                        trade_data["uuid"] = sell_order["uuid"]
+                    continue
+                else:
+                    self.log(f"🚨 {market} : 5분 경과 BUT 1% 수익률 미달, 현재 수익률 {profit_rate:.2f}%")
 
             # ✅ 변동성 기반 손절 설정
             volatility_factor = 0.96 if market in high_volatility_markets else 0.98
@@ -258,7 +277,6 @@ class AutoTrader:
             # ✅ 2% 목표 수익 도달 시 매도 (상승장일 경우 트레일링 스탑 유지)
             if current_price >= buy_price * 1.02:
                 if market_trend == "bullish":
-                    trade_data["highest_price"] = max(trade_data["highest_price"], current_price)
                     self.log(f"🚀 상승장 감지! 트레일링 스탑 유지: {market}, 최고가 = {trade_data['highest_price']:.8f}원")
                 else:
                     self.log(f"✅ {market_trend.upper()} 시장 감지 → 목표 수익률 도달 (2% 상승) → 즉시 매도: {market}, 가격: {current_price:.8f}원")
@@ -271,9 +289,13 @@ class AutoTrader:
                         trade_data["uuid"] = sell_order["uuid"]
                     continue  # ✅ 즉시 매도되었으므로 트레일링 스탑을 실행할 필요 없음.
 
-            # ✅ 트레일링 스탑 (-1% ~ -2%) 적용 (시장 상황에 따라 다르게 조정)
-            trailing_stop_factor = 0.98 if market_trend == "bullish" else 0.99  # 상승장에서는 -2%, 보합장에서는 -1% 조정
-            if trade_data["highest_price"] * trailing_stop_factor >= current_price:
+            # ✅ 트레일링 스탑 발동 조건: 최소 +2% 수익 이상에서만 작동
+            if current_price >= buy_price * 1.02:  # 🔹 수익이 +2%를 초과한 경우
+                trade_data["highest_price"] = max(trade_data["highest_price"], current_price)
+                self.log(f"🚀 최고점 갱신: {market}, 최고점 = {trade_data['highest_price']:.8f}원")
+
+            # ✅ 트레일링 스탑 (-1%) 적용: 최소 2% 수익 이후부터 작동
+            if trade_data["highest_price"] >= buy_price * 1.02 and current_price <= trade_data["highest_price"] * 0.99:
                 self.log(f"🚀 트레일링 스탑 매도: {market}, 가격: {current_price:.8f}원")
                 getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
                                         f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
@@ -283,6 +305,7 @@ class AutoTrader:
                 if "error" not in sell_order:
                     trade_data["uuid"] = sell_order["uuid"]
                 continue
+
 
     # ✅ 매도 후 종목이 하나도 없을 경우 새로운 매수 진행
         if len(self.active_trades) == 0 and self.is_active:
