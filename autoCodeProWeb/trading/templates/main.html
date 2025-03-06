@@ -5,44 +5,69 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>업비트 자동매매 시스템</title>
     <style>
-        html, body { margin: 0; padding: 0; width: 98%; height: 100%; }
-        #trade-log, #sell-log { height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background-color: #f8f8f8; width: 100%; }
-        body { font-family: Arial, sans-serif; margin: 20px; padding: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        table, th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
-        th { background-color: #f4f4f4; }
-        .section { margin-bottom: 40px; }
-        .button { padding: 10px 20px; margin: 5px; border: none; cursor: pointer; }
-        .start { background-color: green; color: white; }
-        .stop { background-color: red; color: white; }
-        input[type="number"] { padding: 5px; width: 100px; }
+        /* ✅ 기본 스타일 설정 */
+        html, body { margin: 0; padding: 0; font-family: 'Arial', sans-serif; background-color: #f4f4f4; }
+        h2, h3 { color: #333; }
+        body { width: 95%; max-width: 1200px; margin: auto; padding: 20px; }
+
+        /* ✅ 테이블 스타일 */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; border-radius: 8px; overflow: hidden; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: center; }
+        th { background-color: #007bff; color: white; }
+        td { font-size: 14px; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+
+        /* ✅ 섹션 스타일 */
+        .section { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1); margin-bottom: 20px; }
+
+        /* ✅ 버튼 스타일 */
+        .button { padding: 12px 20px; margin: 5px; border: none; cursor: pointer; font-size: 14px; border-radius: 5px; }
+        .start { background-color: #28a745; color: white; transition: 0.3s; }
+        .stop { background-color: #dc3545; color: white; transition: 0.3s; }
+        .start:hover { background-color: #218838; }
+        .stop:hover { background-color: #c82333; }
+
+        /* ✅ 입력 필드 */
+        input[type="number"] { padding: 8px; width: 120px; border: 1px solid #ccc; border-radius: 5px; text-align: center; }
+
+        /* ✅ 로그 창 스타일 */
+        #trade-log, #sell-log { height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; background: #fff; width: 100%; }
+
+        /* ✅ 반응형 디자인 */
+        @media (max-width: 768px) {
+            .flex-container { flex-direction: column; }
+            .trade-control { width: 100%; }
+        }
     </style>
 </head>
 <body>
-{% load humanize %}
-<h2>업비트 자동매매 시스템</h2>
 
-<!-- 내 자산 -->
+<h2>📊 업비트 자동매매 시스템</h2>
+
+<!-- ✅ 내 자산 -->
 <div class="section">
-    <h3>내 자산 (계좌 정보)</h3>
+    <h3>💰 내 자산 (계좌 정보)</h3>
     <table id="account-table">
         <tr><th>화폐</th><th>보유 수량</th><th>평균 매수가</th><th>현재 평가 금액</th></tr>
         {% for account in account_info %}
         <tr>
             <td>{{ account.currency }}</td>
-            <td>{{ account.balance|floatformat:4|intcomma }}</td>
-            <td>{{ account.avg_buy_price|floatformat:0|intcomma }}</td>
+            <td>{{ account.balance|floatformat:4 }}</td>
+            <td>{{ account.avg_buy_price|floatformat:0 }}</td>
             <td style="color:{% if account.balance|floatformat:0 > account.avg_buy_price %}red{% else %}blue{% endif %};">
-                {{ account.balance|floatformat:0|intcomma }}
+                {{ account.balance|floatformat:0 }}
             </td>
         </tr>
         {% endfor %}
     </table>
 </div>
 
-<!-- 거래량 상위 5개 코인 -->
+<!-- ✅ 전일 대비 상승한 거래유망코인들 -->
 <div class="section">
-    <h3>전일 대비 상승한 거래유망코인들</h3>
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h3>🔥 전일 대비 상승한 거래유망코인들</h3>
+        <h4 id="marketVolume" style="color: #007bff;"></h4>  <!-- ✅ 시장 거래량 표시 -->
+    </div>
     <table id="coin-table">
         <thead>
         <tr><th>코인명</th><th>현재가 (KRW)</th><th>전일 대비</th><th>거래대금 (KRW)</th></tr>
@@ -51,30 +76,39 @@
         {% for coin in top_coins %}
         <tr>
             <td>{{ coin.market }}</td>
-            <td>{{ coin.trade_price | intcomma }}원</td>
+            <td>{{ coin.trade_price }}원</td>
             <td style="color:{% if coin.signed_change_rate > 0 %}red{% else %}blue{% endif %};">
-                {{ coin.signed_change_rate | floatformat:2 }}%
+                {{ coin.signed_change_rate }}%
             </td>
-            <td>{{ coin.acc_trade_price_24h | intcomma }}원</td>
+            <td>{{ coin.acc_trade_price_24h }}원</td>
         </tr>
         {% endfor %}
         </tbody>
     </table>
 </div>
 
-<!-- 자동매매 컨트롤 -->
-<div class="section" style="display: flex; align-items: flex-start; gap: 20px;">
-    <div>
-        <h3 id="auto-trade-status"></h3>
+<!-- ✅ 자동매매 컨트롤 & 최근 거래 -->
+<div class="section flex-container" style="display: flex; gap: 20px;">
+    <!-- ✅ 자동매매 컨트롤 -->
+    <div class="trade-control" style="width: 40%;">
+        <h3 id="auto-trade-status">⚙️ 자동매매 상태</h3>
         <label>매수 금액 (원): </label>
         <input type="number" id="buy_amount" min="1000" step="1000" value="10000">
         <button class="button start" onclick="startAutoTrading()">자동매매 시작</button>
         <button class="button stop" onclick="stopAutoTrading()">자동매매 정지</button>
     </div>
-    <div style="width: 100%">
-        <h3>자동매매 로그</h3>
-        <div id="trade-log"></div>
+
+    <!-- ✅ 최근 거래 내역 -->
+    <div class="trade-log" style="width: 60%;">
+        <h3>📌 최근 매도체결 내역</h3>
+        <div id="recentTradeLog"></div>
     </div>
+</div>
+
+<!-- ✅ 추가된 로그 섹션 -->
+<div class="section">
+    <h3>📜 거래 로그</h3>
+    <div id="trade-log" style="width:98%;"></div>
 </div>
 
 <script>
@@ -82,7 +116,6 @@
         fetch("/api/fetch_account_data/")
             .then(response => response.json())
             .then(data => {
-                console.log("🔍 계좌 정보 업데이트:", data); // ✅ 디버깅용 로그 추가
                 if (!data.account_info) {
                     console.error("⚠️ 계좌 정보 없음!");
                     return;
@@ -139,6 +172,31 @@
             .then(data => alert(data.status === "stopped" ? "자동매매가 중지되었습니다!" : "자동매매 중지 실패"));
     }
 
+    function recentTradeLog() {
+        fetch(`/api/getRecntTradeLog`)
+            .then(response => response.json())
+            .then(data => {
+                let statusText = document.getElementById("recentTradeLog");
+                let lenText = data.recentTradeLog.length;
+                if(lenText === 0){
+                    return;
+                }
+                if (!Array.isArray(data.recentTradeLog)) {
+                    data.recentTradeLog = [data.recentTradeLog];  // 문자열이면 배열로 변환
+                }
+                statusText.innerHTML = data.recentTradeLog[data.recentTradeLog.length-1]
+            });
+    }
+
+    function getMarketVolume() {
+        fetch(`/api/get_market_volume/`)
+            .then(response => response.json())
+            .then(data => {
+                let statusText = document.getElementById("marketVolume");
+                statusText.innerHTML = data.market_volume_cur;
+            });
+    }
+
     function updateTradeLogs() {
         fetch("/api/trade_logs/")
             .then(response => response.json())
@@ -159,10 +217,13 @@
             });
     }
 
+
     setInterval(updateTradeLogs, 1000);
     setInterval(updateCoinData, 1000);
     setInterval(checkAutoTradingStatus, 5000);
     setInterval(updateAccountData, 1000);
+    setInterval(getMarketVolume, 3000);
+    setInterval(recentTradeLog, 3000);
 </script>
 </body>
 </html>

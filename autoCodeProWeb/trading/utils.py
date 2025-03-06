@@ -3,13 +3,14 @@
 import requests
 import jwt
 import hashlib
-import os
 import uuid
 from urllib.parse import urlencode, unquote
 from django.conf import settings
-from .models import FailedMarket
+from .models import FailedMarket,MarketVolumeRecord
 
 failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
+market_volume_cur = None # 현재 장상황
+getRecntTradeLogCur = None #최근 거래내역
 
 def get_account_info():
     """ ✅ 업비트 전체 계좌 조회 API 호출 """
@@ -190,5 +191,103 @@ def get_open_orders():
     else:
         print(f"⚠️ 미체결 주문 조회 실패: {response.status_code}, {response.json()}")
         return []
+
+def get_market_trend():
+    """ ✅ BTC & ETH 변동성을 기반으로 시장 강도를 분석 """
+    coin_data = get_krw_market_coin_info()
+
+    btc = next((coin for coin in coin_data if coin["market"] == "KRW-BTC"), None)
+    eth = next((coin for coin in coin_data if coin["market"] == "KRW-ETH"), None)
+
+    if not btc or not eth:
+        return "neutral"  # 데이터 없으면 보합장으로 처리
+
+    btc_change = btc["signed_change_rate"]  # BTC 변동률
+    eth_change = eth["signed_change_rate"]  # ETH 변동률
+    avg_change = (btc_change + eth_change) / 2  # 두 종목 평균 변동률
+
+    if avg_change > 0.02:  # +2% 이상이면 상승장
+        return "bullish"
+    elif avg_change < -0.02:  # -2% 이하이면 하락장
+        return "bearish"
+    else:
+        return "neutral"  # 그 외에는 보합장
+
+def get_market_trend_by_volume():
+    """ ✅ 전체 시장 거래량 변화를 기반으로 시장 강도를 분석 """
+    coin_data = get_krw_market_coin_info()
+    total_volume = sum(coin["acc_trade_price_24h"] for coin in coin_data)  # 현재 거래량
+    previous_volume = get_previous_market_volume()  # 🔹 과거 거래량 (DB에서 가져옴)
+
+    if previous_volume == 0:
+        return "neutral"  # 데이터가 없으면 보합장으로 처리
+
+    volume_change = (total_volume - previous_volume) / previous_volume  # 거래량 변동률
+
+    if volume_change > 0.2:
+        return "bullish"  # 20% 이상 증가 -> 강세장
+    elif volume_change < -0.2:
+        return "bearish"  # 20% 이상 감소 -> 약세장
+    else:
+        return "neutral"  # 변동성이 낮으면 보합장
+
+
+def get_market_trend_by_ratio():
+    """ ✅ 상승/하락 코인 비율을 활용한 시장 강도 분석 """
+    coin_data = get_krw_market_coin_info()
+
+    rising_coins = sum(1 for coin in coin_data if coin["signed_change_rate"] > 0)
+    falling_coins = sum(1 for coin in coin_data if coin["signed_change_rate"] < 0)
+
+    total_coins = len(coin_data)
+    rising_ratio = rising_coins / total_coins  # 상승 비율
+    falling_ratio = falling_coins / total_coins  # 하락 비율
+
+    if rising_ratio > 0.6:  # 60% 이상이 상승 중이면 강세장
+        return "bullish"
+    elif falling_ratio > 0.6:  # 60% 이상이 하락 중이면 약세장
+        return "bearish"
+    else:
+        return "neutral"  # 상승/하락 균형이면 보합장
+
+def get_combined_market_trend():
+    """ ✅ 여러 지표를 결합하여 시장 강도 분석 """
+    global market_volume_cur
+    trend_by_btc_eth = get_market_trend()  # BTC/ETH 변동률 기준
+    trend_by_volume = get_market_trend_by_volume()  # 전체 거래량 변화 기준
+    trend_by_ratio = get_market_trend_by_ratio()  # 상승/하락 비율 기준
+
+    trends = [trend_by_btc_eth, trend_by_volume, trend_by_ratio]
+
+    if trends.count("bullish") >= 2:  # 3개 중 2개 이상이 강세장이면 상승장
+        market_volume_cur = "상승장"
+        return "bullish"
+    elif trends.count("bearish") >= 2:  # 3개 중 2개 이상이 약세장이면 하락장
+        market_volume_cur = "하락장"
+        return "bearish"
+    else:
+        market_volume_cur = "보합장"
+        return "neutral"  # 나머지는 보합장
+
+def get_previous_market_volume():
+    """ ✅ DB에서 가장 최근의 시장 거래량 기록을 가져옴 """
+    last_record = MarketVolumeRecord.objects.order_by("-recorded_at").first()
+    return last_record.total_market_volume if last_record else 0  # 데이터가 없으면 0 반환
+
+def record_market_volume():
+    """ ✅ 현재 시장의 전체 거래량을 DB에 저장 """
+    coin_data = get_krw_market_coin_info()
+    total_volume = sum(coin["acc_trade_price_24h"] for coin in coin_data)  # 전체 거래량 계산
+
+    # ✅ 새 거래량 데이터 저장
+    MarketVolumeRecord.objects.create(total_market_volume=total_volume)
+    print(f"📊 시장 거래량 기록됨: {total_volume}")
+
+def get_market_volume_cur():
+    try:
+        return market_volume_cur
+    except Exception as e :
+        return {"error" : str(e)}
+
 
 

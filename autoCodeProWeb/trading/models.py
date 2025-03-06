@@ -19,3 +19,10 @@ class FailedMarket(models.Model):
     def __str__(self):
         return self.market
 
+class MarketVolumeRecord(models.Model):
+    recorded_at = models.DateTimeField(auto_now_add=True)  # 기록된 시간
+    total_market_volume = models.FloatField()  # 기록된 총 거래량
+
+    def __str__(self):
+        return f"시장 거래량 기록 ({self.recorded_at}): {self.total_market_volume}"
+

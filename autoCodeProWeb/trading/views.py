@@ -1,9 +1,10 @@
 # trading/views.py
 from django.shortcuts import render
 from django.http import JsonResponse
-from .utils import get_account_info, get_krw_market_coin_info
-from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin
+from .utils import get_account_info , get_market_volume_cur
+from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog
 import threading
+import time
 
 trader = None  # ✅ 자동매매 객체
 
@@ -53,3 +54,16 @@ def stop_auto_trading(request):
 def check_auto_trading(request):
     """ ✅ 자동매매 실행 여부 확인 """
     return JsonResponse({"is_active": trader.is_active if trader else False})
+
+def start_market_volume_tracking():
+    """ ✅ 주기적으로 시장 거래량을 기록하는 함수 (24시간마다 실행) """
+    from .utils import record_market_volume  # ✅ 함수 내부에서 import
+    while True:
+        record_market_volume()
+        time.sleep(86400)  # 24시간마다 실행 (60초 * 60분 * 24시간)
+
+def get_market_volume(request):
+    return JsonResponse({"market_volume_cur": get_market_volume_cur()})
+
+def recentTradeLog(request):  # ✅ 함수 호출해서 데이터를 가져오기
+    return JsonResponse({"recentTradeLog": getRecntTradeLog})  # ✅ 리스트에서 첫 번째 요소 가져오기

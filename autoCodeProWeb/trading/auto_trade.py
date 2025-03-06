@@ -3,13 +3,12 @@ import time
 import threading
 from .models import TradeRecord
 from django.db import transaction
-from .utils import get_krw_market_coin_info, upbit_order, get_orderbook, get_account_info ,check_order_filled
+from .utils import get_krw_market_coin_info, upbit_order, get_orderbook, get_account_info, check_order_filled , get_combined_market_trend
 
 trade_logs = []  # ✅ 자동매매 로그 저장 리스트
 recently_sold = {}  # ✅ 최근 매도한 코인 기록
 orderbook_cache = {}  # ✅ 호가 데이터 캐싱
-
-
+getRecntTradeLog = []
 
 def load_active_trade():
     """ ✅ 활성화된 거래 기록을 불러옴 """
@@ -53,7 +52,8 @@ def get_best_trade_coin():
         # ✅ 매수세 강도 계산 (매수 총잔량 vs 매도 총잔량 비교)
         bid_size = orderbook.get("total_bid_size", 0)
         ask_size = orderbook.get("total_ask_size", 0)
-        spread = (orderbook["orderbook_units"][0]["ask_price"] - orderbook["orderbook_units"][0]["bid_price"]) / orderbook["orderbook_units"][0]["bid_price"]
+        spread = (orderbook["orderbook_units"][0]["ask_price"] - orderbook["orderbook_units"][0]["bid_price"]) / \
+                 orderbook["orderbook_units"][0]["bid_price"]
 
         if bid_size > ask_size * 1.5 and spread < 0.001:  # ✅ 매수세가 강하고 스프레드가 좁은 종목 선정
             coin["bid_size"] = bid_size
@@ -66,6 +66,7 @@ def get_best_trade_coin():
     best_coin = max(top_5_coins, key=lambda x: x["trade_price"] * x["acc_trade_price_24h"])
 
     return best_coin, top_5_coins
+
 
 class AutoTrader:
     def __init__(self, budget):
@@ -92,7 +93,6 @@ class AutoTrader:
         if len(trade_logs) > 50:
             trade_logs.pop(0)
 
-
     def save_trade(self, market, buy_price, uuid):
         """ ✅ 현재 거래 상태를 DB에 저장 """
         with transaction.atomic():
@@ -118,6 +118,13 @@ class AutoTrader:
             if market in self.active_trades:
                 del self.active_trades[market]  # ✅ 메모리에서도 제거
 
+    def change_trade(self, market):
+        """ ✅ 거래 종료 후 DB에서 삭제 """
+        with transaction.atomic():
+            TradeRecord.objects.filter(market=market).update(is_active=False)
+            if market in self.active_trades:
+                del self.active_trades[market]  # ✅ 메모리에서도 제거
+
     def start_trading(self):
         """ ✅ 자동매매 시작 """
         if self.is_active:
@@ -137,8 +144,10 @@ class AutoTrader:
         self.log("🛑 자동매매 중지됨!")
 
     def execute_trade(self):
-        """ ✅ 자동매매 실행 (다중 종목 관리) """
+        """ ✅ 자동매매 실행 (변동성 리스크 관리 추가) """
+
         account_info = get_account_info()
+        market_trend = get_combined_market_trend()
         user_holdings = {item["currency"]: item for item in account_info}
 
         # ✅ 안전한 KRW 잔고 변환 (없으면 0으로 처리)
@@ -147,43 +156,54 @@ class AutoTrader:
         # ✅ 현재 거래 중인 종목 DB 업데이트
         active_trades = TradeRecord.objects.filter(is_active=True)
         active_markets = set(active_trades.values_list("market", flat=True))
-        self.active_trades = {trade.market: {"buy_price": trade.buy_price, "uuid": trade.uuid, "highest_price": trade.highest_price} for trade in active_trades}
+        self.active_trades = {
+            trade.market: {"buy_price": trade.buy_price, "uuid": trade.uuid, "highest_price": trade.highest_price} for trade
+            in active_trades}
 
         # ✅ 사용자가 직접 매도했는지 확인
-        for trade in list(self.active_trades.keys()):
-            market = trade
+        for market in list(self.active_trades.keys()):
             currency = market.replace("KRW-", "")
 
             if currency not in user_holdings:
                 self.log(f"⚠️ 사용자가 직접 {market}을(를) 매도함. 거래 기록 정리")
                 self.clear_trade(market)
-                active_markets.remove(market)
-                del self.active_trades[market]  # ✅ 내부 관리 목록에서도 삭제
+                active_markets.discard(market)  # ✅ 집합(set)에서 안전하게 제거
+                self.active_trades.pop(market, None)  # ✅ 안전하게 삭제
+
+        # ✅ 변동성 필터링을 위한 데이터 가져오기
+        market_data = get_krw_market_coin_info()
+        if not isinstance(market_data, list):
+            self.log(f"⚠️ API 데이터 오류: {market_data}")
+            return
+
+        # ✅ 변동성이 너무 큰 종목 필터링 (최근 5분 변동률 확인)
+        volatility_data = {coin["market"]: abs(coin["signed_change_rate"]) for coin in market_data}
+        high_volatility_markets = {market for market, vol in volatility_data.items() if vol > 0.05}  # ✅ 5% 이상 변동한 종목 제외
 
         # ✅ 현재 보유 중인 코인에 대한 처리
         for market, trade_data in list(self.active_trades.items()):
             currency = market.replace("KRW-", "")
-
             # ✅ 매도 주문 체결 확인
             if "uuid" in trade_data and check_order_filled(trade_data["uuid"]):
                 self.log(f"✅ 매도 체결 완료: {market}")
                 self.clear_trade(market)
-                del self.active_trades[market]  # ✅ 내부 관리 목록에서도 삭제
+                self.active_trades.pop(market, None)  # ✅ 안전하게 삭제
                 continue
-
             # ✅ 현재 가격 확인
-            market_data = get_krw_market_coin_info()
-            if not isinstance(market_data, list):
-                self.log(f"⚠️ API 데이터 오류: {market_data}")
-                continue  # 잘못된 데이터일 경우 처리 중단
-
             current_price = next((coin["trade_price"] for coin in market_data if coin["market"] == market), None)
             if not current_price:
                 continue
 
             buy_price = trade_data["buy_price"]
-            highest_price = max(trade_data["highest_price"], current_price)
-            trade_data["highest_price"] = highest_price  # ✅ 최고가 업데이트
+
+            if trade_data["highest_price"] is None:
+                trade_data["highest_price"] = buy_price  # ✅ 매수가를 초기 최고점으로 설정
+                TradeRecord.objects.filter(market=market).update(highest_price=buy_price)
+
+            if current_price > trade_data["highest_price"]:
+                trade_data["highest_price"] = current_price  # ✅ 가격 상승 시만 최고점 갱신
+                TradeRecord.objects.filter(market=market).update(highest_price=current_price)  # ✅ DB 업데이트
+                self.log(f"📊 최고점 갱신: {market}, 최고점 = {trade_data['highest_price']:.8f}원")
 
             # ✅ 수익률 계산
             fee_rate = 0.0005  # 업비트 수수료
@@ -191,50 +211,98 @@ class AutoTrader:
             real_sell_price = current_price * (1 - fee_rate)
             profit_rate = ((real_sell_price - real_buy_price) / real_buy_price) * 100
 
+            # ✅ 기존 거래 데이터에 entry_time이 없을 경우, created_at 사용
+            trade_entry_time = TradeRecord.objects.get(market=market).created_at.timestamp()  # ✅ created_at → timestamp 변환
+            holding_time = time.time() - trade_entry_time  # ✅ 보유 시간 계산 (초 단위)
+
             self.log(f"📊 거래중인 코인 = {market} 현재 가격: {current_price:.8f}원 "
-                     f"(매수가: {buy_price:.8f}원, 최고점: {highest_price:.8f}원, "
+                     f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
                      f"수익률: {profit_rate:.2f}%)")
 
-            # ✅ 2% 목표 수익 도달 시 매도
-            if current_price >= buy_price * 1.02:
-                self.log(f"✅ 목표 수익률 도달 → 매도 실행: {market}, 가격: {current_price:.8f}원")
+            # ✅ 보합장 / 하락장에서 5분 경과 후 1% 수익 시 즉시 매도
+            if market_trend in ["neutral", "bearish"] and holding_time > 600:  # ✅ 10분(600초) 초과
+                if current_price >= buy_price * 1.01:  # ✅ 1% 수익
+                    self.log(f"✅ 보합/하락장 감지 → 5분 보유 후 1% 수익 도달! 즉시 매도: {market}, 가격: {current_price:.8f}원")
+                    getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
+                    f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                    f"수익률: {profit_rate:.2f}%)")
+                    sell_order = upbit_order(market, "ask", ord_type="market",
+                                             volume=str(user_holdings.get(currency, {}).get("balance", 0)))
+                    if "error" not in sell_order:
+                        trade_data["uuid"] = sell_order["uuid"]
+                    continue  # ✅ 즉시 매도되었으므로 추가 트레일링 스탑 실행 X
+
+            # ✅ 변동성 기반 손절 설정
+            volatility_factor = 0.96 if market in high_volatility_markets else 0.98
+            if current_price <= buy_price * volatility_factor:
+                self.log(f"🛑 변동성 리스크 반영 손절 ({100 - volatility_factor * 100:.1f}% 하락): {market}, 가격: {current_price:.8f}원")
+                getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
+                                        f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                                        f"수익률: {profit_rate:.2f}%)")
                 sell_order = upbit_order(market, "ask", ord_type="market", volume=str(user_holdings.get(currency, {}).get("balance", 0)))
                 if "error" not in sell_order:
                     trade_data["uuid"] = sell_order["uuid"]
                 continue
 
-            # ✅ 트레일링 스탑 (-1%) 매도
-            if highest_price * 0.99 >= current_price:
-                self.log(f"🚀 트레일링 스탑 매도: {market}, 가격: {current_price:.8f}원")
-                sell_order = upbit_order(market, "ask", ord_type="market", volume=str(user_holdings.get(currency, {}).get("balance", 0)))
-                if "error" not in sell_order:
-                    trade_data["uuid"] = sell_order["uuid"]
-                continue
-
-            # ✅ -2% 손절
+            # ✅ 추가적인 -2% 손절 로직 (변동성 손절과 별도로 적용)
             if current_price <= buy_price * 0.98:
-                self.log(f"🛑 손절 매도 (-2% 하락): {market}, 가격: {current_price:.8f}원")
+                self.log(f"🛑 -2% 손절 기준 도달 → 즉시 매도: {market}, 가격: {current_price:.8f}원")
+                getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
+                                        f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                                        f"수익률: {profit_rate:.2f}%)")
                 sell_order = upbit_order(market, "ask", ord_type="market", volume=str(user_holdings.get(currency, {}).get("balance", 0)))
                 if "error" not in sell_order:
                     trade_data["uuid"] = sell_order["uuid"]
                 continue
 
-        # ✅ 활성 거래 3개 이상이면 추가 매수 중단
-        print(len(active_markets))
+            # ✅ 2% 목표 수익 도달 시 매도 (상승장일 경우 트레일링 스탑 유지)
+            if current_price >= buy_price * 1.02:
+                if market_trend == "bullish":
+                    trade_data["highest_price"] = max(trade_data["highest_price"], current_price)
+                    self.log(f"🚀 상승장 감지! 트레일링 스탑 유지: {market}, 최고가 = {trade_data['highest_price']:.8f}원")
+                else:
+                    self.log(f"✅ {market_trend.upper()} 시장 감지 → 목표 수익률 도달 (2% 상승) → 즉시 매도: {market}, 가격: {current_price:.8f}원")
+                    getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
+                                            f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                                            f"수익률: {profit_rate:.2f}%)")
+                    sell_order = upbit_order(market, "ask", ord_type="market",
+                                             volume=str(user_holdings.get(currency, {}).get("balance", 0)))
+                    if "error" not in sell_order:
+                        trade_data["uuid"] = sell_order["uuid"]
+                    continue  # ✅ 즉시 매도되었으므로 트레일링 스탑을 실행할 필요 없음.
+
+            # ✅ 트레일링 스탑 (-1% ~ -2%) 적용 (시장 상황에 따라 다르게 조정)
+            trailing_stop_factor = 0.98 if market_trend == "bullish" else 0.99  # 상승장에서는 -2%, 보합장에서는 -1% 조정
+            if trade_data["highest_price"] * trailing_stop_factor >= current_price:
+                self.log(f"🚀 트레일링 스탑 매도: {market}, 가격: {current_price:.8f}원")
+                getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
+                                        f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
+                                        f"수익률: {profit_rate:.2f}%)")
+                sell_order = upbit_order(market, "ask", ord_type="market",
+                                         volume=str(user_holdings.get(currency, {}).get("balance", 0)))
+                if "error" not in sell_order:
+                    trade_data["uuid"] = sell_order["uuid"]
+                continue
+
+    # ✅ 매도 후 종목이 하나도 없을 경우 새로운 매수 진행
+        if len(self.active_trades) == 0 and self.is_active:
+            self.log("🔄 모든 종목이 매도 완료됨, 새로운 종목 매수 진행")
+
+            # ✅ 활성 거래 3개 이상이면 추가 매수 중단
         if len(active_markets) >= 3:
             self.log("⏸️ 현재 활성화된 거래가 3개 이상이므로 추가 매수 중단")
             return
 
-        # ✅ 새로운 매수 진행 (기존 보유 종목 제외 후 매수)
-        else :
+            # ✅ 새로운 매수 진행 (변동성 높은 종목 제외)
+        if self.is_active:
             best_coin, top_coins = get_best_trade_coin()
-            if not best_coin or best_coin["market"] in active_markets:
-                self.log("❌ 매수할 적절한 종목 없음 (기존 거래 유지 중)")
+            if not best_coin or best_coin["market"] in active_markets or best_coin["market"] in high_volatility_markets:
+                self.log("❌ 매수할 적절한 종목 없음 (변동성 초과 종목 제외)")
                 return
 
             market = best_coin["market"]
-            buy_amount = min(float(self.budget), krw_balance)  # ✅ 잔고가 부족하면 가능한 만큼 매수
-            if buy_amount < 5000:  # ✅ 업비트 최소 주문 금액 체크
+            buy_amount = min(float(self.budget), krw_balance)
+            if buy_amount < 5000:
                 self.log(f"⚠️ 잔고 부족으로 매수 불가 (현재 잔고: {krw_balance:.2f}원)")
                 return
 
@@ -243,12 +311,3 @@ class AutoTrader:
 
             if "error" not in buy_order:
                 self.save_trade(market, best_coin["trade_price"], buy_order["uuid"])
-
-
-
-
-
-
-
-
-
