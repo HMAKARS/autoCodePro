@@ -92,7 +92,7 @@
     <!-- ✅ 자동매매 컨트롤 -->
     <div class="trade-control" style="width: 40%;">
         <h3 id="auto-trade-status">⚙️ 자동매매 상태</h3>
-        <label>매수 금액 (원): </label>
+        <label id="budgets">매수 금액 (원): </label>
         <input type="number" id="buy_amount" min="1000" step="1000" value="10000">
         <button class="button start" onclick="startAutoTrading()">자동매매 시작</button>
         <button class="button stop" onclick="stopAutoTrading()">자동매매 정지</button>
@@ -112,6 +112,7 @@
 </div>
 
 <script>
+    let arrProfit = "";
     function updateAccountData() {
         fetch("/api/fetch_account_data/")
             .then(response => response.json())
@@ -125,6 +126,20 @@
                 data.account_info.forEach(account => {
                     let evalPrice = parseFloat(account.balance) * parseFloat(account.avg_buy_price || 0);
                     let color = evalPrice > parseFloat(account.avg_buy_price || 0) ? "red" : "blue";
+                    if(arrProfit.length > 0){
+                        for(i in arrProfit){
+                            var itemProfit = arrProfit[i]
+                            var strMarket = itemProfit.market
+                            var strProfitRate = itemProfit.profit_rate
+                            if(strMarket != null || strMarket != undefined || strMarket != ""){
+                                if(account.currency == strMarket.split("-")[1]){
+                                    let budget = document.getElementById("buy_amount").value
+                                    evalPrice = budget * (1 + parseFloat(strProfitRate) / 100)
+                                    evalPrice = evalPrice.toFixed(2)
+                                }
+                            }
+                        }
+                    }
                     accountTable += `<tr>
                             <td>${account.currency}</td>
                             <td>${parseFloat(account.balance).toLocaleString()}</td>
@@ -217,13 +232,27 @@
             });
     }
 
+    function recentProfitLog() {
+        fetch(`/api/recentProfitLog/`)
+            .then(response => response.json())
+            .then(data => {
+                arrProfit = data.listProfit;
+            });
+    }
 
-    setInterval(updateTradeLogs, 1000);
-    setInterval(updateCoinData, 1000);
-    setInterval(checkAutoTradingStatus, 5000);
-    setInterval(updateAccountData, 1000);
-    setInterval(getMarketVolume, 3000);
-    setInterval(recentTradeLog, 3000);
+    let arrInterval = [];
+
+    try{
+        setInterval(updateTradeLogs, 1000);
+        setInterval(updateCoinData, 1000);
+        setInterval(checkAutoTradingStatus, 5000);
+        setInterval(updateAccountData, 1000);
+        setInterval(getMarketVolume, 3000);
+        setInterval(recentTradeLog, 3000);
+        //setInterval(recentProfitLog,10000)
+    }catch (e){
+
+    }
 </script>
 </body>
 </html>

@@ -1,4 +1,6 @@
 # trading/utils.py
+import json
+import time
 
 import requests
 import jwt
@@ -27,11 +29,21 @@ def get_account_info():
 
     url = "https://api.upbit.com/v1/accounts"
     response = requests.get(url, headers=headers)
+    arrJson = response.json()
+    #response.json 의 타입은 list
+    """
     if response.status_code == 200 :
-        tranRecord = TradeRecord.objects.filter(is_active=True,krw_buy_price__gt=0)
-        #if len(tranRecord) > 0 :
-        # 마저 작업할 부분
-    return response.json() if response.status_code == 200 else {"error": response.json()}
+        #tranRecord = TradeRecord.objects.filter(buy_krw_price__gte=0)
+        tranRecord = TradeRecord.objects.filter(is_active=True,buy_krw_price__gte=0)
+        if len(tranRecord) > 0 :
+            tranVal = list(tranRecord.values("market","buy_krw_price"))
+            for item in arrJson :
+                marketJoin = item.get("unit_currency") + "-" + item.get("currency")
+                filtered = list(filter(lambda items: items["market"] == marketJoin, tranVal))
+                if len(filtered) > 0 :
+                    item["buy_krw_price"] = filtered[0].get("buy_krw_price")
+    """
+    return arrJson if response.status_code == 200 else {"error": arrJson}
 
 def get_krw_market_coin_info():
     """ ✅ 원화(KRW) 시장의 모든 코인 정보 조회 """
@@ -160,7 +172,7 @@ def get_orderbook(markets):
     params = {"markets": ",".join(markets)}
 
     try:
-        response = requests.get(url, params=params, timeout=2)
+        response = requests.get(url, params=params, timeout=5)
         if response.status_code != 200:
             print(f"⚠️ 호가 데이터 요청 실패 (HTTP {response.status_code})")
             return {}

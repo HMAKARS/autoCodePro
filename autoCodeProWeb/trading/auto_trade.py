@@ -10,6 +10,8 @@ trade_logs = []  # ✅ 자동매매 로그 저장 리스트
 recently_sold = {}  # ✅ 최근 매도한 코인 기록
 orderbook_cache = {}  # ✅ 호가 데이터 캐싱
 getRecntTradeLog = []
+listProfit = []
+
 
 def load_active_trade():
     """ ✅ 활성화된 거래 기록을 불러옴 """
@@ -107,7 +109,7 @@ class AutoTrader:
                     "uuid": uuid,
                     "is_active": True,
                     "created_at": timezone.now(),  # ✅ 매수 시점 갱신
-                    "buy_krw_price" : self.budget
+                    "buy_krw_price" : budget
                 }
             )
             self.active_trades[market] = {
@@ -131,29 +133,44 @@ class AutoTrader:
             if market in self.active_trades:
                 del self.active_trades[market]  # ✅ 메모리에서도 제거
 
-    def start_trading(self):
-        """ ✅ 자동매매 시작 """
-        try :
-            if self.is_active:
-                self.log("⚠️ 이미 자동매매 실행 중")
-                return
-
-            self.is_active = True
-            self.log("🚀 자동매매 시작됨!")
-
+    def _run_trading(self):
+        """ ✅ 쓰레드에서 실행할 자동매매 루프 """
+        try:
             while self.is_active:
                 self.execute_trade()
-                time.sleep(1)
-        except Exception as e :
+                time.sleep(1)  # ✅ 1초 간격으로 거래 실행
+        except Exception as e:
+            self.log(f"⚠️ 거래 중 오류 발생: {e}")
             self.failedTrade += 1
             while self.is_active and self.failedTrade < 3:
                 self.execute_trade()
                 time.sleep(1)
 
+    def start_trading(self):
+        """ ✅ 자동매매 시작 (쓰레드 실행) """
+        if self.is_active:
+            self.log("⚠️ 이미 자동매매 실행 중")
+            return
+
+        self.is_active = True
+        self.failedTrade = 0
+        self.log("🚀 자동매매 시작됨!")
+
+        # ✅ 새로운 쓰레드를 생성하여 _run_trading 실행
+        self.trade_thread = threading.Thread(target=self._run_trading, daemon=True)
+        self.trade_thread.start()
+
     def stop_trading(self):
         """ ✅ 자동매매 중지 """
+        if not self.is_active:
+            self.log("⚠️ 자동매매가 이미 중지됨")
+            return
+
         self.is_active = False
         self.log("🛑 자동매매 중지됨!")
+
+        if self.trade_thread and self.trade_thread.is_alive():
+            self.trade_thread.join()  # ✅ 쓰레드가 안전하게 종료될 때까지 기다림
 
     def execute_trade(self):
         """ ✅ 자동매매 실행 (변동성 리스크 관리 추가) """
@@ -175,7 +192,6 @@ class AutoTrader:
         # ✅ 사용자가 직접 매도했는지 확인
         for market in list(self.active_trades.keys()):
             currency = market.replace("KRW-", "")
-
             if currency not in user_holdings:
                 self.log(f"⚠️ 사용자가 직접 {market}을(를) 매도함. 거래 기록 정리")
                 self.clear_trade(market)
@@ -231,6 +247,21 @@ class AutoTrader:
             self.log(f"📊 거래중인 코인 = {market} 현재 가격: {current_price:.8f}원 "
                      f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
                      f"수익률: {profit_rate:.2f}%)")
+            """
+            dictProfit = {"market" : "","profit_rate" : ""}
+            if len(listProfit) > 0 :
+                for item in listProfit :
+                    if item.get("market") == market :
+                        item["profit_rate"] = profit_rate
+                    else :
+                        dictProfit["market"] = market
+                        dictProfit["profit_rate"] = profit_rate
+                        listProfit.append(dictProfit)
+            else :
+                dictProfit["market"] = market
+                dictProfit["profit_rate"] = profit_rate
+                listProfit.append(dictProfit)
+            """
 
             # ✅ 10분 보유 후 1% 수익 도달 시 매도 (보합장/하락장)
             if market_trend in ["neutral", "bearish"] and holding_time > 600:
@@ -326,7 +357,7 @@ class AutoTrader:
             self.log("⏸️ 현재 활성화된 거래가 3개 이상이므로 추가 매수 중단")
             return
 
-            # ✅ 새로운 매수 진행 (변동성 높은 종목 제외)
+        # ✅ 새로운 매수 진행 (변동성 높은 종목 제외)
         if self.is_active:
             best_coin, top_coins = get_best_trade_coin()
             if not best_coin or best_coin["market"] in active_markets or best_coin["market"] in high_volatility_markets:
@@ -343,4 +374,4 @@ class AutoTrader:
             buy_order = upbit_order(market, "bid", price=str(buy_amount), ord_type="price")
 
             if "error" not in buy_order:
-                self.save_trade(market, best_coin["trade_price"], buy_order["uuid"])
+                self.save_trade(market, best_coin["trade_price"], buy_order["uuid"],self.budget)

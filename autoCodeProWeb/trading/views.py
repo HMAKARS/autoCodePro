@@ -2,7 +2,7 @@
 from django.shortcuts import render
 from django.http import JsonResponse
 from .utils import get_account_info , get_market_volume_cur
-from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog
+from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog , listProfit
 import threading
 import time
 
@@ -67,3 +67,6 @@ def get_market_volume(request):
 
 def recentTradeLog(request):  # ✅ 함수 호출해서 데이터를 가져오기
     return JsonResponse({"recentTradeLog": getRecntTradeLog})  # ✅ 리스트에서 첫 번째 요소 가져오기
+
+def recentProfitLog(request) :
+    return JsonResponse({"listProfit": listProfit})
