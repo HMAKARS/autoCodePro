@@ -316,11 +316,11 @@ class AutoTrader:
                 continue
 
             # ✅ 2% 목표 수익 도달 시 매도 (상승장일 경우 트레일링 스탑 유지)
-            if current_price >= buy_price * 1.02:
+            if current_price >= buy_price * 1.01:
                 if market_trend == "bullish":
                     self.log(f"🚀 상승장 감지! 트레일링 스탑 유지: {market}, 최고가 = {trade_data['highest_price']:.8f}원")
                 else:
-                    self.log(f"✅ {market_trend.upper()} 시장 감지 → 목표 수익률 도달 (2% 상승) → 즉시 매도: {market}, 가격: {current_price:.8f}원")
+                    self.log(f"✅ {market_trend.upper()} 시장 감지 → 목표 수익률 도달 (1% 상승) → 즉시 매도: {market}, 가격: {current_price:.8f}원")
                     getRecntTradeLog.append(f"📊 매도체결된 코인 = {market} 현재 가격: {current_price:.8f}원 ,"
                                             f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
                                             f"수익률: {profit_rate:.2f}%)")
