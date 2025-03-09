@@ -7,7 +7,7 @@ import hashlib
 import uuid
 from urllib.parse import urlencode, unquote
 from django.conf import settings
-from .models import TradeRecord,FailedMarket,MarketVolumeRecord,AskRecrod
+from .models import FailedMarket,MarketVolumeRecord,AskRecrod
 
 
 market_volume_cur = None # 현재 장상황
