@@ -1,6 +1,8 @@
 # trading/utils.py
 import json
-import time
+from contextlib import nullcontext
+
+from django.utils import timezone
 
 import requests
 import jwt
@@ -8,9 +10,9 @@ import hashlib
 import uuid
 from urllib.parse import urlencode, unquote
 from django.conf import settings
-from .models import TradeRecord,FailedMarket,MarketVolumeRecord
+from .models import TradeRecord,FailedMarket,MarketVolumeRecord,AskRecrod
 
-failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
+
 market_volume_cur = None # 현재 장상황
 getRecntTradeLogCur = None #최근 거래내역
 
@@ -30,19 +32,7 @@ def get_account_info():
     url = "https://api.upbit.com/v1/accounts"
     response = requests.get(url, headers=headers)
     arrJson = response.json()
-    #response.json 의 타입은 list
-    """
-    if response.status_code == 200 :
-        #tranRecord = TradeRecord.objects.filter(buy_krw_price__gte=0)
-        tranRecord = TradeRecord.objects.filter(is_active=True,buy_krw_price__gte=0)
-        if len(tranRecord) > 0 :
-            tranVal = list(tranRecord.values("market","buy_krw_price"))
-            for item in arrJson :
-                marketJoin = item.get("unit_currency") + "-" + item.get("currency")
-                filtered = list(filter(lambda items: items["market"] == marketJoin, tranVal))
-                if len(filtered) > 0 :
-                    item["buy_krw_price"] = filtered[0].get("buy_krw_price")
-    """
+
     return arrJson if response.status_code == 200 else {"error": arrJson}
 
 def get_krw_market_coin_info():
@@ -71,9 +61,24 @@ def get_krw_market_coin_info():
 
 def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in_force=None):
     """ ✅ 업비트 주문 요청 (실패 시 재시도 방지 및 실패 시장 추적) """
+    failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
     if market in failed_markets:
         print(f"⚠️ {market}은(는) 이전 주문 실패로 인해 제외됨")
         return {"error": "Market excluded due to previous failures"}
+
+    latest_market = AskRecrod.objects.order_by('-id').values_list('market', flat=True).first()
+    latest_market_time = AskRecrod.objects.order_by('-id').values_list('recorded_at', flat=True).first()
+    if latest_market_time != None and market == latest_market and side == "bid":
+        elapsed_time = (timezone.now() - latest_market_time).total_seconds()
+        print(f"최근 매도된 코인 {latest_market} 최근 매도 시각: {latest_market_time}, 경과 시간: {elapsed_time:.2f}초")
+
+        if elapsed_time < 300:
+            print("🚫 5분이 지나지 않았습니다. 거래를 중단합니다.")
+            return
+        else :
+            print("✅ 5분이 지났습니다. 거래를 계속 진행합니다.")
+
+
 
     access_key = settings.UPBIT_ACCESS_KEY
     secret_key = settings.UPBIT_SECRET_KEY
@@ -117,6 +122,15 @@ def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in
         FailedMarket.objects.get_or_create(market=market)  # DB에 실패 시장 추가
         failed_markets.add(market)  # ✅ 실패한 시장을 추적하여 이후 매수에서 제외
         return {"error": response.json()}
+    elif response.status_code != 200:
+        if side == "ask" :
+            AskRecrod.objects.update_or_create(
+                market=market,
+                defaults={
+                    "recorded_at": timezone.now()  # ✅ 매도 시점 갱신
+                }
+            )
+
 
     return response.json()
 
