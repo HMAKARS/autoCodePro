@@ -1,7 +1,4 @@
 # trading/utils.py
-import json
-from contextlib import nullcontext
-
 from django.utils import timezone
 
 import requests
@@ -15,6 +12,7 @@ from .models import TradeRecord,FailedMarket,MarketVolumeRecord,AskRecrod
 
 market_volume_cur = None # 현재 장상황
 getRecntTradeLogCur = None #최근 거래내역
+failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
 
 def get_account_info():
     """ ✅ 업비트 전체 계좌 조회 API 호출 """
@@ -61,7 +59,7 @@ def get_krw_market_coin_info():
 
 def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in_force=None):
     """ ✅ 업비트 주문 요청 (실패 시 재시도 방지 및 실패 시장 추적) """
-    failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
+
     if market in failed_markets:
         print(f"⚠️ {market}은(는) 이전 주문 실패로 인해 제외됨")
         return {"error": "Market excluded due to previous failures"}

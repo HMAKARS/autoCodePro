@@ -189,6 +189,7 @@ class AutoTrader:
             trade.market: {"buy_price": trade.buy_price, "uuid": trade.uuid, "highest_price": trade.highest_price , "created_at" : trade.created_at} for trade
             in active_trades}
 
+
         # ✅ 사용자가 직접 매도했는지 확인
         for market in list(self.active_trades.keys()):
             currency = market.replace("KRW-", "")
@@ -197,6 +198,7 @@ class AutoTrader:
                 self.clear_trade(market)
                 active_markets.discard(market)  # ✅ 집합(set)에서 안전하게 제거
                 self.active_trades.pop(market, None)  # ✅ 안전하게 삭제
+
 
         # ✅ 변동성 필터링을 위한 데이터 가져오기
         market_data = get_krw_market_coin_info()
@@ -247,21 +249,6 @@ class AutoTrader:
             self.log(f"📊 거래중인 코인 = {market} 현재 가격: {current_price:.8f}원 "
                      f"(매수가: {buy_price:.8f}원, 최고점: {trade_data['highest_price']:.8f}원, "
                      f"수익률: {profit_rate:.2f}%)")
-            """
-            dictProfit = {"market" : "","profit_rate" : ""}
-            if len(listProfit) > 0 :
-                for item in listProfit :
-                    if item.get("market") == market :
-                        item["profit_rate"] = profit_rate
-                    else :
-                        dictProfit["market"] = market
-                        dictProfit["profit_rate"] = profit_rate
-                        listProfit.append(dictProfit)
-            else :
-                dictProfit["market"] = market
-                dictProfit["profit_rate"] = profit_rate
-                listProfit.append(dictProfit)
-            """
 
             # ✅ 2% 목표 수익 도달 시 매도 (상승장일 경우 트레일링 스탑 유지)
             if current_price >= buy_price * 1.01:
@@ -346,9 +333,6 @@ class AutoTrader:
                 if "error" not in sell_order:
                     trade_data["uuid"] = sell_order["uuid"]
                 continue
-
-
-
 
     # ✅ 매도 후 종목이 하나도 없을 경우 새로운 매수 진행
         if len(self.active_trades) == 0 and self.is_active:
