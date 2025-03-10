@@ -5,10 +5,11 @@ from .utils import get_account_info , get_market_volume_cur
 from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog , listProfit , update_volume_cache
 import threading
 import time
+import pandas as pd
+import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-import pandas as pd
 from .indicators import calculate_rsi, calculate_macd, calculate_stochastic, calculate_ema, calculate_bollinger_bands, calculate_atr
 
 trader = None  # ✅ 자동매매 객체
@@ -81,14 +82,41 @@ def recentTradeLog(request):  # ✅ 함수 호출해서 데이터를 가져오�
 def recentProfitLog(request) :
     return JsonResponse({"listProfit": listProfit})
 
-class TradingSignalView(APIView):
-    def post(self, request):
-        data = request.data  # JSON 데이터 받기
-        prices = pd.Series(data.get("close_prices"))  # 종가 리스트
-        high_prices = pd.Series(data.get("high_prices"))  # 고가 리스트
-        low_prices = pd.Series(data.get("low_prices"))  # 저가 리스트
+UPBIT_TICKER_URL = "https://api.upbit.com/v1/market/all"
+UPBIT_TICKER_INFO_URL = "https://api.upbit.com/v1/ticker"
+UPBIT_CANDLE_URL = "https://api.upbit.com/v1/candles/minutes/1"
 
-        # 🚀 1. 지표 계산
+class TradingSignalView(APIView):
+    def get_top_volume_tickers(self):
+        """거래량 상위 5개 코인 가져오기"""
+        response = requests.get(UPBIT_TICKER_INFO_URL, params={"markets": ",".join(self.get_all_tickers())}).json()
+        df = pd.DataFrame(response)
+        df = df[['market', 'acc_trade_price']]
+        df = df.sort_values(by='acc_trade_price', ascending=False)[:5]  # 거래량 상위 5개 선택
+        return df['market'].tolist()
+
+    def get_all_tickers(self):
+        """업비트에서 모든 종목 리스트 가져오기"""
+        response = requests.get(UPBIT_TICKER_URL).json()
+        tickers = [item['market'] for item in response if item['market'].startswith('KRW-')]
+        return tickers
+
+    def get_candle_data(self, ticker):
+        """업비트에서 특정 종목의 1분봉 데이터 가져오기"""
+        response = requests.get(f"{UPBIT_CANDLE_URL}?market={ticker}&count=20").json()
+        df = pd.DataFrame(response)
+        df = df[['trade_price', 'high_price', 'low_price']]
+        df.columns = ['close', 'high', 'low']
+        return df[::-1]  # 최근 데이터부터 정렬
+
+    def analyze_ticker(self, ticker):
+        """종목별 지표 계산 후 매수 여부 판별"""
+        df = self.get_candle_data(ticker)
+        prices = df['close']
+        high_prices = df['high']
+        low_prices = df['low']
+
+        # 🎯 지표 계산
         rsi = calculate_rsi(prices)
         macd, macd_signal = calculate_macd(prices)
         stochastic_k, stochastic_d = calculate_stochastic(prices, high_prices, low_prices)
@@ -97,11 +125,8 @@ class TradingSignalView(APIView):
         bollinger_upper, bollinger_lower = calculate_bollinger_bands(prices)
         atr = calculate_atr(high_prices, low_prices, prices)
 
-        # 매수/매도 신호 초기화
+        # 🎯 매수 조건 판별
         buy_signal = 0
-        sell_signal = 0
-
-        # 🚀 2. 매수 조건 (반등 노리기)
         if (
                 rsi < 30 and  # RSI 과매도
                 macd > macd_signal and  # MACD 골든크로스
@@ -112,20 +137,9 @@ class TradingSignalView(APIView):
         ):
             buy_signal = 1  # 매수 신호 발생
 
-        # 🚀 3. 매도 조건 (익절 또는 손절)
-        if (
-                rsi > 70 or  # RSI 과매수
-                macd < macd_signal or  # MACD 데드크로스
-                stochastic_k > 80 or stochastic_d > 80 or (stochastic_k < stochastic_d) or  # 스토캐스틱 과매수
-                ema_9 < ema_21 or  # 단기 EMA < 장기 EMA
-                prices.iloc[-1] < bollinger_upper  # 볼린저 밴드 상단에서 저항
-        ):
-            sell_signal = 1  # 매도 신호 발생
-
-        # 🚀 4. 응답 반환
-        return Response({
-            "buy": buy_signal,
-            "sell": sell_signal,
+        return {
+            "ticker": ticker,
+            "buy_signal": buy_signal,
             "rsi": rsi,
             "macd": macd,
             "macd_signal": macd_signal,
@@ -136,7 +150,19 @@ class TradingSignalView(APIView):
             "bollinger_upper": bollinger_upper,
             "bollinger_lower": bollinger_lower,
             "atr": atr
-        }, status=status.HTTP_200_OK)
+        }
+
+    def get(self, request):
+        """거래량 상위 5개 종목을 분석하고 매수할 종목을 반환"""
+        top_tickers = self.get_top_volume_tickers()
+        buy_candidates = []
+
+        for ticker in top_tickers:
+            result = self.analyze_ticker(ticker)
+            if result["buy_signal"] == 1:
+                buy_candidates.append(result)
+
+        return Response({"buy_candidates": buy_candidates}, status=status.HTTP_200_OK)
 
 
 
