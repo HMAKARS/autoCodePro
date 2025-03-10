@@ -5,6 +5,11 @@ from .utils import get_account_info , get_market_volume_cur
 from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog , listProfit , update_volume_cache
 import threading
 import time
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+import pandas as pd
+from .indicators import calculate_rsi, calculate_macd, calculate_stochastic, calculate_ema, calculate_bollinger_bands, calculate_atr
 
 trader = None  # ✅ 자동매매 객체
 
@@ -75,3 +80,63 @@ def recentTradeLog(request):  # ✅ 함수 호출해서 데이터를 가져오�
 
 def recentProfitLog(request) :
     return JsonResponse({"listProfit": listProfit})
+
+class TradingSignalView(APIView):
+    def post(self, request):
+        data = request.data  # JSON 데이터 받기
+        prices = pd.Series(data.get("close_prices"))  # 종가 리스트
+        high_prices = pd.Series(data.get("high_prices"))  # 고가 리스트
+        low_prices = pd.Series(data.get("low_prices"))  # 저가 리스트
+
+        # 🚀 1. 지표 계산
+        rsi = calculate_rsi(prices)
+        macd, macd_signal = calculate_macd(prices)
+        stochastic_k, stochastic_d = calculate_stochastic(prices, high_prices, low_prices)
+        ema_9 = calculate_ema(prices, 9)
+        ema_21 = calculate_ema(prices, 21)
+        bollinger_upper, bollinger_lower = calculate_bollinger_bands(prices)
+        atr = calculate_atr(high_prices, low_prices, prices)
+
+        # 매수/매도 신호 초기화
+        buy_signal = 0
+        sell_signal = 0
+
+        # 🚀 2. 매수 조건 (반등 노리기)
+        if (
+                rsi < 30 and  # RSI 과매도
+                macd > macd_signal and  # MACD 골든크로스
+                stochastic_k < 20 and stochastic_d < 20 and stochastic_k > stochastic_d and  # 스토캐스틱 과매도 후 반등
+                ema_9 > ema_21 and  # 단기 EMA > 장기 EMA
+                prices.iloc[-1] > bollinger_lower and  # 볼린저 밴드 하단에서 반등
+                atr > 20  # 변동성이 충분히 높은 경우
+        ):
+            buy_signal = 1  # 매수 신호 발생
+
+        # 🚀 3. 매도 조건 (익절 또는 손절)
+        if (
+                rsi > 70 or  # RSI 과매수
+                macd < macd_signal or  # MACD 데드크로스
+                stochastic_k > 80 or stochastic_d > 80 or (stochastic_k < stochastic_d) or  # 스토캐스틱 과매수
+                ema_9 < ema_21 or  # 단기 EMA < 장기 EMA
+                prices.iloc[-1] < bollinger_upper  # 볼린저 밴드 상단에서 저항
+        ):
+            sell_signal = 1  # 매도 신호 발생
+
+        # 🚀 4. 응답 반환
+        return Response({
+            "buy": buy_signal,
+            "sell": sell_signal,
+            "rsi": rsi,
+            "macd": macd,
+            "macd_signal": macd_signal,
+            "stochastic_k": stochastic_k,
+            "stochastic_d": stochastic_d,
+            "ema_9": ema_9,
+            "ema_21": ema_21,
+            "bollinger_upper": bollinger_upper,
+            "bollinger_lower": bollinger_lower,
+            "atr": atr
+        }, status=status.HTTP_200_OK)
+
+
+
