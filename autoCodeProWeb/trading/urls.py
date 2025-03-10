@@ -2,7 +2,7 @@
 from django.urls import path
 from .views import (main_view, start_auto_trading,
                     stop_auto_trading, fetch_account_data, fetch_coin_data, check_auto_trading,
-                    fetch_trade_logs , get_market_volume , recentTradeLog ,recentProfitLog)
+                    fetch_trade_logs , get_market_volume , recentTradeLog ,recentProfitLog , startVolumeCheck)
 
 urlpatterns = [
     path('', main_view, name='main-page'),
@@ -15,4 +15,5 @@ urlpatterns = [
     path('api/get_market_volume/', get_market_volume, name='get_market_volume'),
     path('api/getRecntTradeLog/', recentTradeLog, name='recentTradeLog'),
     path('api/recentProfitLog/', recentProfitLog, name='recentProfitLog'),
+    path('api/startVolumeCheck/', startVolumeCheck, name='startVolumeCheck'),
     ]

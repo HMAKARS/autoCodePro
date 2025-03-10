@@ -2,7 +2,7 @@
 from django.shortcuts import render
 from django.http import JsonResponse
 from .utils import get_account_info , get_market_volume_cur
-from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog , listProfit
+from .auto_trade import AutoTrader, trade_logs, get_best_trade_coin , getRecntTradeLog , listProfit , update_volume_cache
 import threading
 import time
 
@@ -24,7 +24,12 @@ def fetch_account_data(request):
 def fetch_coin_data(request):
     """ ✅ AJAX 요청을 받아 상위 5개 코인 정보를 반환 """
     _, top_coins = get_best_trade_coin()
+
     return JsonResponse({"top_coins": top_coins})
+
+def startVolumeCheck(request) :
+    update_volume_cache()
+    return JsonResponse({"returnCache" : "true"})
 
 def fetch_trade_logs(request):
     """ ✅ 자동매매 로그 반환 """

@@ -65,7 +65,7 @@
 <!-- ✅ 전일 대비 상승한 거래유망코인들 -->
 <div class="section">
     <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h3>🔥 전일 대비 상승한 거래유망코인들</h3>
+        <h3>🔥거래유망코인들</h3>
         <h4 id="marketVolume" style="color: #007bff;"></h4>  <!-- ✅ 시장 거래량 표시 -->
     </div>
     <table id="coin-table">
@@ -240,16 +240,24 @@
             });
     }
 
+    function startVolumeCheck() {
+        fetch(`/api/startVolumeCheck/`)
+            .then(response => response.json())
+            .then(data => {
+
+            });
+    }
+
     let arrInterval = [];
 
     try{
+        setInterval(startVolumeCheck,5000);
         setInterval(updateTradeLogs, 1000);
         setInterval(updateCoinData, 1000);
         setInterval(checkAutoTradingStatus, 5000);
         setInterval(updateAccountData, 1000);
         setInterval(getMarketVolume, 3000);
         setInterval(recentTradeLog, 3000);
-        //setInterval(recentProfitLog,10000)
     }catch (e){
 
     }
