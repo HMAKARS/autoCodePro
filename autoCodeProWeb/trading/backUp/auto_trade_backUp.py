@@ -2,11 +2,9 @@
 import time
 from django.utils import timezone
 import threading
-import pandas as pd
 from .models import TradeRecord
 from django.db import transaction
-from .utils import get_krw_market_coin_info, upbit_order, get_orderbook, get_account_info, check_order_filled , get_combined_market_trend , get_candle_data
-from .indicatorTrade.indicators import calculate_atr,calculate_ema,calculate_stochastic,calculate_macd,calculate_rsi,calculate_bollinger_bands
+from .utils import get_krw_market_coin_info, upbit_order, get_orderbook, get_account_info, check_order_filled , get_combined_market_trend
 
 trade_logs = []  # ✅ 자동매매 로그 저장 리스트
 recently_sold = {}  # ✅ 최근 매도한 코인 기록
@@ -15,8 +13,6 @@ volume_cache = {}  # ✅ 거래량 캐싱
 
 getRecntTradeLog = []
 listProfit = []
-
-
 
 
 
@@ -33,64 +29,117 @@ def load_active_trade():
     return None
 
 recent_high_cache = {}  # ✅ 최근 30분 최고가 캐싱
-last_candle_time = {}
-# ✅ 볼린저 밴드 값을 저장하는 캐시 (각 코인별)
-bollinger_band_cache = {}
-indicators_cache = {}
 
+def update_volume_cache():
+    """ ✅ 실시간 거래량 변화를 감지하는 함수 & 최근 최고가 업데이트 """
+    market_data = get_krw_market_coin_info()
+    current_timestamp = int(time.time() * 1000)  # ✅ 현재 시간 (밀리초 단위)
+
+    for coin in market_data:
+        market = coin["market"]
+        current_volume = coin["trade_volume"]  # ✅ 가장 최근 거래량
+        current_price = coin["trade_price"]  # ✅ 현재 가격
+
+        # ✅ 거래량 변화 감지
+        if market in volume_cache:
+            # ✅ 거래량 캐싱 업데이트
+            volume_cache[market] = {
+                "prev": volume_cache.get(market, {}).get("current", current_volume),
+                "current": current_volume
+            }
+
+            # ✅ 최근 30분 최고가 계산
+            if market not in recent_high_cache:
+                recent_high_cache[market] = []  # ✅ 없으면 초기화
+
+            # ✅ 최근 30분 동안의 가격 리스트에 현재 가격 추가
+            recent_high_cache[market].append((current_timestamp, current_price))
+
+            # ✅ 30분이 지난 데이터 삭제
+            recent_high_cache[market] = [
+                (timestamp, price) for timestamp, price in recent_high_cache[market]
+                if current_timestamp - timestamp <= 30 * 60 * 1000  # 30분 이내 데이터만 유지
+            ]
+        elif market not in volume_cache :
+            volume_cache[market] = {
+                "prev": 0,
+                "current": current_volume
+            }
 
 def get_best_trade_coin():
-    """ ✅ 전일 대비 상승한 10개 종목 중에서 호가 정보를 기반으로 상위 5개 선정 """
+    """ ✅ 눌림목 + 거래량 급등 기반으로 최적의 매수 종목 선정 """
 
     coin_data = get_krw_market_coin_info()
     if "error" in coin_data:
         return None, []
 
-    # ✅ 전일 대비 상승률 기준 상위 10개 선정
-    positive_coins = [coin for coin in coin_data if coin["signed_change_rate"] > 0]
-    top_10_cur_coins = sorted(positive_coins, key=lambda x: x["signed_change_rate"], reverse=True)[:10]
-
-    # ✅ 호가 데이터 한 번에 요청 후 캐싱 (429 방지)
-    markets = [coin["market"] for coin in top_10_cur_coins]
     now = time.time()
-
-    fresh_markets = [m for m in markets if m not in orderbook_cache or (now - orderbook_cache[m]["timestamp"] > 5)]
-    if fresh_markets:
-        new_orderbook_data = get_orderbook(fresh_markets)
-        for market, data in new_orderbook_data.items():
-            orderbook_cache[market] = {"data": data, "timestamp": now}
-
     filtered_coins = []
-    for coin in top_10_cur_coins:
+
+    for coin in coin_data:
         market = coin["market"]
+        current_volume = coin["trade_volume"]
         current_price = coin["trade_price"]
-        orderbook = orderbook_cache.get(coin["market"], {}).get("data")
+
+        # ✅ 이전 거래량과 비교
+        if market in volume_cache:
+            prev_volume = volume_cache[market]["prev"]
+            volume_change = (current_volume - prev_volume) / prev_volume if prev_volume else 0
+        else:
+            volume_change = 0  # 첫 실행 시 변화율 0
+        # ✅ 거래량이 150% 이상 급증한 종목만 필터링
+        if volume_change < 1.0:
+            continue
+        # ✅ 최근 5~10분 급락한 종목 제외 (-5% 이상 하락)
+        if coin["signed_change_rate"] < -0.07:
+            continue
+
+        # ✅ 최근 30분 최고점을 가져오기
+        if market in recent_high_cache and recent_high_cache[market]:
+            recent_high = max(price for _, price in recent_high_cache[market])  # ✅ 최고가 찾기
+            print(f"📊 {market} 최근 30분 최고가: {recent_high:.2f}")
+        else:
+            recent_high = coin["high_price"]  # ✅ 만약 데이터가 없으면 당일 최고가 사용
+            print(f"⚠️ {market} 최근 30분 최고가 데이터 없음 → 당일 최고가 사용: {recent_high:.2f}")
+
+        # ✅ 눌림목 조건: 최근 30분 최고점 대비 1.5%~3% 하락한 구간
+        if not (recent_high * 0.96 <= current_price <= recent_high * 0.99):  # 🔹 기준 완화 (-3%~ -1.5%)
+            print(f"❌ {market} 눌림목 조건 불충족 (현재가: {current_price:.2f}, 최근 고점: {recent_high:.2f})")
+            continue
+        print(market)
+        # ✅ 호가 데이터 가져오기
+        orderbook = orderbook_cache.get(market, {}).get("data")
         if not orderbook:
             continue
-        #print(current_price)
-        #macd, macd_signal = calculate_macd(current_price)
 
-        # ✅ 매수 조건 (EMA, ATR 추가)
-        #if not macd > macd_signal :
-            #continue
-
-        # ✅ 매수세 강도 계산 (매수 총잔량 vs 매도 총잔량 비교)
+        # ✅ 매수/매도 대기 물량 확인
         bid_size = orderbook.get("total_bid_size", 0)
         ask_size = orderbook.get("total_ask_size", 0)
+        # ✅ 스프레드 (매수-매도 가격 차이)가 너무 큰 종목 제외
         spread = (orderbook["orderbook_units"][0]["ask_price"] - orderbook["orderbook_units"][0]["bid_price"]) / \
                  orderbook["orderbook_units"][0]["bid_price"]
-
-        if bid_size > ask_size * 1.5 and spread < 0.001:  # ✅ 매수세가 강하고 스프레드가 좁은 종목 선정
-            coin["bid_size"] = bid_size
-            filtered_coins.append(coin)
+        print(spread)
+        if spread > 0.007:
+            continue  # 🔴 스프레드가 0.5% 이상이면 제외 (단타에 불리)
+        # ✅ 매도 물량이 과도하게 높은 종목 제외
+        if ask_size > bid_size * 2.5:
+            continue
+        print(market)
+        # ✅ 최종 필터링된 종목 저장
+        coin["bid_size"] = bid_size
+        filtered_coins.append(coin)
 
     if not filtered_coins:
         return None, []
 
+    # ✅ 거래량 기준 상위 5개 선정
     top_5_coins = sorted(filtered_coins, key=lambda x: x["acc_trade_price_24h"], reverse=True)[:5]
+
+    # ✅ 가장 안정적인 종목 선택 (거래량 * 가격 고려)
     best_coin = max(top_5_coins, key=lambda x: x["trade_price"] * x["acc_trade_price_24h"])
 
     return best_coin, top_5_coins
+
 
 class AutoTrader:
     def __init__(self, budget):
@@ -373,7 +422,7 @@ class AutoTrader:
 
             market = best_coin["market"]
             buy_amount = min(float(self.budget), krw_balance)
-            if buy_amount < 10000:
+            if buy_amount < 5000:
                 self.log(f"⚠️ 잔고 부족으로 매수 불가 (현재 잔고: {krw_balance:.2f}원)")
                 return
 

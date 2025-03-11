@@ -8,6 +8,7 @@ import uuid
 from urllib.parse import urlencode, unquote
 from django.conf import settings
 from .models import FailedMarket,MarketVolumeRecord,AskRecrod
+import pandas as pd
 
 
 market_volume_cur = None # 현재 장상황
@@ -33,6 +34,32 @@ def get_account_info():
 
     return arrJson if response.status_code == 200 else {"error": arrJson}
 
+UPBIT_CANDLE_URL = "https://api.upbit.com/v1/candles/seconds"
+
+def get_candle_data(market, count=30):
+    """
+    ✅ 업비트 API에서 특정 종목의 1분봉 데이터를 가져오는 함수
+    :param market: 조회할 코인의 종목 코드 (예: "KRW-BTC")
+    :param count: 가져올 캔들 개수 (기본값: 30)
+    :return: DataFrame (고가, 저가, 종가 데이터 포함)
+    """
+    try:
+        response = requests.get(UPBIT_CANDLE_URL, params={"market": market, "count": count})
+        response.raise_for_status()  # 요청 오류가 있으면 예외 발생
+        data = response.json()  # JSON 응답을 파이썬 리스트로 변환
+
+        # DataFrame 변환 및 필요한 컬럼 추출
+        df = pd.DataFrame(data)
+        df = df[["trade_price", "high_price", "low_price"]]  # 종가, 고가, 저가 추출
+        df.columns = ["close", "high", "low"]  # 컬럼명 변경 (지표 계산 함수와 일치시키기)
+        df = df.iloc[::-1]  # 최신 데이터가 위쪽에 있으므로 역순 정렬
+
+        return df
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ {market} 캔들 데이터 요청 실패: {e}")
+        return None
+
 def get_krw_market_coin_info():
     """ ✅ 원화(KRW) 시장의 모든 코인 정보 조회 """
     markets_url = "https://api.upbit.com/v1/market/all"
@@ -53,6 +80,7 @@ def get_krw_market_coin_info():
             "market": ticker["market"],
             "trade_price": ticker["trade_price"],
             "high_price" : ticker["high_price"],
+            "low_price" : ticker["low_price"],
             "trade_volume" : ticker["trade_volume"],
             "signed_change_rate": ticker["signed_change_rate"],
             "acc_trade_price_24h": ticker["acc_trade_price_24h"],
@@ -73,11 +101,11 @@ def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in
         elapsed_time = (timezone.now() - latest_market_time).total_seconds()
         print(f"최근 매도된 코인 {latest_market} 최근 매도 시각: {latest_market_time}, 경과 시간: {elapsed_time:.2f}초")
 
-        if elapsed_time < 300:
-            print("🚫 5분이 지나지 않았습니다. 거래를 중단합니다.")
+        if elapsed_time < 1200:
+            print("🚫 10분이 지나지 않았습니다. 거래를 중단합니다.")
             return
         else :
-            print("✅ 5분이 지났습니다. 거래를 계속 진행합니다.")
+            print("✅ 10분이 지났습니다. 거래를 계속 진행합니다.")
 
 
 
