@@ -14,6 +14,7 @@ import pandas as pd
 market_volume_cur = None # 현재 장상황
 getRecntTradeLogCur = None #최근 거래내역
 failed_markets = set(FailedMarket.objects.values_list('market', flat=True))
+krw_balance = None
 
 def get_account_info():
     """ ✅ 업비트 전체 계좌 조회 API 호출 """
@@ -31,6 +32,8 @@ def get_account_info():
     url = "https://api.upbit.com/v1/accounts"
     response = requests.get(url, headers=headers)
     arrJson = response.json()
+    global krw_balance
+    krw_balance = arrJson[0]["balance"]
 
     return arrJson if response.status_code == 200 else {"error": arrJson}
 
@@ -91,6 +94,13 @@ def get_krw_market_coin_info():
 def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in_force=None):
     """ ✅ 업비트 주문 요청 (실패 시 재시도 방지 및 실패 시장 추적) """
 
+    global krw_balance
+    if price != None and krw_balance != None :
+        if float(price) > float(krw_balance) :
+            price = krw_balance
+        elif float(price) == float(krw_balance)  :
+            return {"error": "price is lower or either than krw balance"}
+
     if market in failed_markets:
         print(f"⚠️ {market}은(는) 이전 주문 실패로 인해 제외됨")
         return {"error": "Market excluded due to previous failures"}
@@ -103,7 +113,7 @@ def upbit_order(market, side, volume=None, price=None, ord_type="limit", time_in
 
         if elapsed_time < 1200:
             print("🚫 10분이 지나지 않았습니다. 거래를 중단합니다.")
-            return
+            return {"error" : "거래 후 같은 종목 10분 전 매수"}
         else :
             print("✅ 10분이 지났습니다. 거래를 계속 진행합니다.")
 

@@ -382,3 +382,5 @@ class AutoTrader:
 
             if "error" not in buy_order:
                 self.save_trade(market, best_coin["trade_price"], buy_order["uuid"],self.budget)
+            else :
+                self.log(f"❌ 매수 실패: {market}, {str(buy_order)}")
